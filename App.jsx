@@ -40,23 +40,28 @@ function parseSheetData(raw) {
   const moisP1 = raw.moisP1 || [];
 
   // ── NOMINA ──────────────────────────────────────────────────────────────────
-  // L1 : date du jour, L2 : mois
-  const today = String(nomina[0]?.[0] || "").replace(/[▶️◀️\s]+/g, ' ').trim();
+  // L1 : date du jour (col A), L2 : mois (col A)
+  const today = String(nomina[0]?.[0] || "").replace(/[^a-zA-Z0-9éèêëàâùûüôîïç\s]/gu, '').trim();
   const month = String(nomina[1]?.[0] || "").trim();
 
-  // Résumé lignes 4-11 (index 3-10)
-  const presentH = nomina[3]?.[3] || 0;
-  const presentE = nomina[3]?.[4] || 0;
-  const futurH   = nomina[5]?.[3] || 0;
-  const futurE   = nomina[5]?.[4] || 0;
-  const totalH   = nomina[7]?.[3] || 0;
-  const totalE   = nomina[7]?.[5] || nomina[7]?.[4] || 0;
-  const nextH    = nomina[10]?.[3] || 0;
-  const nextE    = nomina[10]?.[4] || 0;
-  const avgRate  = nomina[23]?.[2] || 0;
-  const actifs   = nomina[23]?.[10] || "";
+  // L24 (idx 23) : B=label, C=avgRate, D=presentH, E=presentE, F=futurH, G=futurE, H=totalH, I=totalE, K=actifs
+  // L4  (idx 3)  : col D = présent en minutes (105 = 1h45), col E = vide
+  // L8  (idx 7)  : TOTAL MOIS col D=totalH, col E=totalE
+  // L11 (idx 10) : mois prochain col D=nextH, col E=nextE
 
-  // Élèves lignes 15-23 (index 14-22)
+  const presentH = nomina[23]?.[3] || 0;  // D24 = 5h
+  const presentE = nomina[23]?.[4] || 0;  // E24 = 105€
+  const futurH   = nomina[23]?.[5] || 0;  // F24 = 4h
+  const futurE   = nomina[23]?.[6] || 0;  // G24 = 105€
+  const totalH   = nomina[23]?.[7] || 0;  // H24 = 9h
+  const totalE   = nomina[23]?.[8] || 0;  // I24 = 210€
+  const nextH    = nomina[10]?.[3] || 0;  // D11 = 147h
+  const nextE    = nomina[10]?.[4] || 0;  // E11 = 1675€
+  const avgRate  = nomina[23]?.[2] || 0;  // C24 = 23.33
+  const actifs   = nomina[23]?.[10] || ""; // K24 = "Actifs : 2"
+
+  // Élèves lignes 15-23 (index 14-22) :
+  // Col A=N°, B=CLIENT, C=Tarif, D=H.Present, E=€Present, F=H.Futur, G=€Futur, H=H.Mois, I=€Mois
   const students = nomina.slice(14, 23)
     .filter(r => r[0] && typeof r[0] === 'number' && r[1])
     .map(r => ({
@@ -72,44 +77,53 @@ function parseSheetData(raw) {
       color:    STUDENT_COLORS_MAP[String(r[0])] || "#888",
     }));
 
-  // Mois -1 (col G-I, index 6-8) lignes 3-12
-  const m1rows = nomina.slice(2, 12).filter(r => r[6] && String(r[6]) !== 'TOTAL ');
-  const m1TotalE = nomina[11]?.[8] || 0;
-  const m1Label  = String(nomina[1]?.[5] || "Mois précédent");
+  // Vérification : les valeurs L24 sont les bonnes (calculées par les formules Sheets)
 
-  // Mois +1 (col J-L, index 9-11)
-  const m2rows = nomina.slice(2, 12).filter(r => r[9] && String(r[9]) !== 'TOTAL ');
+  // Mois -1 (col G=idx6, H=idx7, I=idx8) lignes 3-12
+  const m1rows = nomina.slice(2, 12).filter(r => r[6] && !String(r[6]).includes('TOTAL') && String(r[6]).length > 1);
+  const m1TotalE = nomina[11]?.[8] || 0;
+  const m1Label  = "Mois précédent";
+
+  // Mois +1 (col J=idx9, K=idx10, L=idx11)
+  const m2rows = nomina.slice(2, 12).filter(r => r[9] && !String(r[9]).includes('TOTAL') && String(r[9]).length > 1);
   const m2TotalE = nomina[11]?.[11] || 0;
-  const m2Label  = "Mois prochain";
 
   // ── RÉCAP ───────────────────────────────────────────────────────────────────
-  const history = recap.slice(1)
-    .filter(r => r[0] && r[0] !== 'DATE' && (r[1] || r[2]))
+  // Colonnes : A=DATE, B=HEURES, C=SALAIRE, D=NBRE, E=PRINCIPAL, F=IFZ,
+  //            G=LoeyersFrance, H=LoyersEsp, I=ADeclarer, J=PaiementEffectif
+  const history = recap.slice(2) // skip 2 header rows
+    .filter(r => r[0] && (r[1] || r[2] || r[9]))
     .map(r => {
       let d = r[0];
-      if (typeof d === 'string') { const m = d.match(/Date\((\d+),(\d+)/); if(m) d = new Date(+m[1],+m[2],1); }
+      if (typeof d === 'string') {
+        const m = d.match(/Date\((\d+),(\d+)/);
+        if (m) d = new Date(+m[1], +m[2], 1);
+      }
       if (!(d instanceof Date) || isNaN(d)) return null;
-      // Colonne J = paiement effectif
-      const salary = r[9] || r[2] || 0;
+      // Paiement effectif = col J (index 9), fallback col C (index 2)
+      const salary = (typeof r[9] === 'number' && r[9] > 0) ? r[9] : (r[2] || 0);
+      if (salary <= 0) return null;
       return {
-        month:  d.toLocaleString('fr-FR', {month:'short', year:'numeric'}).replace(' ', ' '),
-        salary: typeof salary === 'number' ? salary : 0,
-        hours:  r[1] || 0,
+        month:  d.toLocaleString('fr-FR', {month:'short', year:'numeric'}),
+        salary: salary,
+        hours:  typeof r[1] === 'number' ? r[1] : 0,
         client: String(r[4] || '—'),
       };
     })
-    .filter(Boolean)
-    .filter(r => r.salary > 0 || r.hours > 0);
+    .filter(Boolean);
 
   // ── COURS ──────────────────────────────────────────────────────────────────
+  // Format Apps Script : col A = titre, col B = date "dd/MM/yyyy HH:mm", col C = durée (minutes), col D = code
   function parseCourses(rows, isDone) {
     const now = new Date();
     return rows
-      .filter(r => r[0] && r[3] && /^\d$/.test(String(r[3]).trim()))
+      .filter(r => r[0] && r[1] && r[3] && /^\d$/.test(String(r[3]).trim()))
       .map(r => {
         const d = parseDate(r[1]);
         if (!d) return null;
-        const durMin = parseDuration(r[2]) * 60;
+        // r[2] = durée en minutes (nombre brut comme 60, 90, 180...)
+        const durMin = typeof r[2] === 'number' ? r[2] : parseDuration(r[2]) * 60;
+        const durationH = durMin / 60;
         const end = new Date(d.getTime() + durMin * 60000);
         const done = isDone !== undefined ? isDone : end <= now;
         const code = String(r[3]).trim();
@@ -120,7 +134,7 @@ function parseSheetData(raw) {
           date: d.toLocaleDateString('fr-FR', {weekday:'short', day:'numeric', month:'short'}),
           time: d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'}),
           done,
-          durationH: durMin / 60,
+          durationH,
         };
       })
       .filter(Boolean);
@@ -128,16 +142,21 @@ function parseSheetData(raw) {
 
   return {
     today, month,
-    summary: { presentH, presentE, futurH, futurE, totalH, totalE, nextH, nextE, avgRate, actifs: String(actifs) },
+    summary: {
+      presentH, presentE,
+      futurH,   futurE,
+      totalH,   totalE,
+      nextH, nextE,
+      avgRate: Math.round(avgRate * 100) / 100,
+      actifs: String(actifs),
+    },
     students,
     prevMonth: {
-      label: m1Label,
-      total: m1TotalE,
+      label: m1Label, total: m1TotalE,
       items: m1rows.map(r => ({ name: String(r[6]), h: r[7]||0, e: r[8]||0 }))
     },
     nextMonth: {
-      label: m2Label,
-      total: m2TotalE,
+      label: "Mois prochain", total: m2TotalE,
       items: m2rows.map(r => ({ name: String(r[9]), h: r[10]||0, e: r[11]||0 }))
     },
     courses: {
@@ -287,8 +306,8 @@ function PageAccueil({ data, onRefresh }) {
         <KpiCard label="Heures réalisées" value={fmtH(s.presentH)} color="#FF6B6B" delay=""/>
         <KpiCard label="Heures restantes" value={fmtH(s.futurH)} color="#45B7D1" delay="-2"/>
         <KpiCard label="Total heures mois" value={fmtH(s.totalH)} color="#4ECDC4" delay="-3"/>
-        <KpiCard label="Prix moyen / h" value={`${s.avgRate} €`} color="#FECA57" delay="-4"/>
-        <KpiCard label="Clients actifs" value={String(s.actifs)} color="#96CEB4" delay="-4"/>
+        <KpiCard label="Prix moyen / h" value={`${Number(s.avgRate).toFixed(2)} €`} color="#FECA57" delay="-4"/>
+        <KpiCard label="Clients actifs" value={String(s.actifs).replace(/Actifs\s*:\s*/i,"")} color="#96CEB4" delay="-4"/>
       </div>
 
       {/* Tableau élèves */}

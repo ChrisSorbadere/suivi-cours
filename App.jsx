@@ -19,12 +19,20 @@ function parseDuration(val) {
 }
 
 // Parse une date depuis Apps Script
-// Format gviz : "Date(2026,2,5,18,0,0)" — mois 0-indexé (2 = mars)
-// Format Apps Script direct : "05/03/2026 18:00"
+// Apps Script exporte les dates en ISO UTC : "2026-03-05T17:00:00.000Z"
+// Pour avoir l'heure locale (CET = UTC+1 ou UTC+2), on ajoute 1h
 function parseDate(val) {
   if (!val) return null;
   if (val instanceof Date) return val;
   const s = String(val);
+  // Format ISO UTC : "2026-03-05T17:00:00.000Z"
+  if (s.includes('T') && (s.endsWith('Z') || s.includes('+00'))) {
+    const d = new Date(s);
+    if (!isNaN(d)) {
+      // Ajouter 1h pour CET (approximation correcte pour l'Europe)
+      return new Date(d.getTime() + 60*60*1000);
+    }
+  }
   // Format gviz : Date(year, month0, day, h, m)
   const m = s.match(/Date\((\d+),(\d+),(\d+),?(\d*),?(\d*)/);
   if (m) return new Date(+m[1], +m[2], +m[3], +(m[4]||0), +(m[5]||0));
@@ -98,10 +106,16 @@ function parseSheetData(raw) {
     .filter(r => r[0] && (r[1] || r[2]))
     .map(r => {
       let d = r[0];
-      // Apps Script exporte les dates comme "Date(year,month,day)" (mois 0-indexé)
       if (typeof d === 'string') {
-        const m = d.match(/Date\((\d+),(\d+)/);
-        if (m) d = new Date(+m[1], +m[2], 1);
+        // Format ISO UTC : "2025-03-31T22:00:00.000Z" → ajouter 2h pour CET
+        if (d.includes('T') && d.endsWith('Z')) {
+          const raw = new Date(d);
+          d = !isNaN(raw) ? new Date(raw.getTime() + 2*60*60*1000) : null;
+        } else {
+          // Format gviz Date(year,month0,...)
+          const m = d.match(/Date\((\d+),(\d+)/);
+          if (m) d = new Date(+m[1], +m[2], 1);
+        }
       }
       if (!(d instanceof Date) || isNaN(d)) return null;
       // Salaire = col C (index 2)
@@ -125,11 +139,17 @@ function parseSheetData(raw) {
       .map(r => {
         const d = parseDate(r[1]);
         if (!d) return null;
-        // r[2] = timedelta Apps Script = fraction de jour (ex: 60min → 0.04166...)
-        // ou string comme "0.041666..." — on convertit en minutes
-        const durationFrac = typeof r[2] === 'number' ? r[2] : parseFloat(r[2]) || 0;
-        const durMin = durationFrac < 1 ? Math.round(durationFrac * 24 * 60) : (durationFrac < 24 ? durationFrac * 60 : durationFrac);
-        const durationH = durMin / 60;
+        // Durée : Apps Script exporte les timedelta en format ISO inutilisable
+        // On extrait la durée depuis le titre si possible (ex: "18h45-19h45" = 1h)
+        // Sinon on utilise 1h par défaut (toutes les séances sont d'1h)
+        let durationH = 1;
+        const titleMatch = String(r[0]).match(/(\d+)h(\d+)-(\d+)h(\d+)/);
+        if (titleMatch) {
+          const start = +titleMatch[1] * 60 + +titleMatch[2];
+          const end2  = +titleMatch[3] * 60 + +titleMatch[4];
+          durationH = (end2 - start) / 60;
+        }
+        const durMin = durationH * 60;
         const end = new Date(d.getTime() + durMin * 60000);
         const done = isDone !== undefined ? isDone : end <= now;
         const code = String(r[3]).trim();

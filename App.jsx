@@ -6,28 +6,31 @@ const API_URL = "https://script.google.com/macros/s/AKfycbyqwSRqI7s_07NHiOX5kRMB
 // Couleurs élèves par code
 const STUDENT_COLORS_MAP = {"1":"#FF6B6B","2":"#4ECDC4","3":"#45B7D1","4":"#96CEB4","5":"#FECA57","6":"#FF9F43","7":"#48DBFB","8":"#FF9FF3"};
 
-// Parse une valeur de durée Google Sheets (nombre de minutes stocké comme fraction de jour ou nombre brut)
+// Parse une durée depuis Apps Script
+// Apps Script exporte timedelta comme fraction de jour : 60min = 60/1440 = 0.04166...
 function parseDuration(val) {
   if (!val) return 0;
   if (typeof val === 'number') {
-    // Si < 2, c'est probablement une fraction de jour (format time Google Sheets)
-    if (val < 2) return val * 24; // fraction de jour → heures
-    return val / 60; // minutes → heures
+    if (val < 1) return val * 24; // fraction de jour → heures (ex: 0.04166 → 1h)
+    if (val < 24) return val;     // déjà en heures
+    return val / 60;              // minutes → heures
   }
   return 0;
 }
 
-// Parse une date Google Sheets (format "Date(year,month,day,...)" ou string dd/MM/yyyy HH:mm)
+// Parse une date depuis Apps Script
+// Format gviz : "Date(2026,2,5,18,0,0)" — mois 0-indexé (2 = mars)
+// Format Apps Script direct : "05/03/2026 18:00"
 function parseDate(val) {
   if (!val) return null;
-  if (typeof val === 'string') {
-    // Format Apps Script exporté : "Date(2026,2,5,18,0,0)"
-    const m = String(val).match(/Date\((\d+),(\d+),(\d+),?(\d*),?(\d*)/);
-    if (m) return new Date(+m[1], +m[2], +m[3], +(m[4]||0), +(m[5]||0));
-    // Format dd/MM/yyyy HH:mm
-    const p = val.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/);
-    if (p) return new Date(+p[3], +p[2]-1, +p[1], +p[4], +p[5]);
-  }
+  if (val instanceof Date) return val;
+  const s = String(val);
+  // Format gviz : Date(year, month0, day, h, m)
+  const m = s.match(/Date\((\d+),(\d+),(\d+),?(\d*),?(\d*)/);
+  if (m) return new Date(+m[1], +m[2], +m[3], +(m[4]||0), +(m[5]||0));
+  // Format dd/MM/yyyy HH:mm
+  const p = s.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/);
+  if (p) return new Date(+p[3], +p[2]-1, +p[1], +p[4], +p[5]);
   return null;
 }
 
@@ -89,19 +92,20 @@ function parseSheetData(raw) {
   const m2TotalE = nomina[11]?.[11] || 0;
 
   // ── RÉCAP ───────────────────────────────────────────────────────────────────
-  // Colonnes : A=DATE, B=HEURES, C=SALAIRE, D=NBRE, E=PRINCIPAL, F=IFZ,
-  //            G=LoeyersFrance, H=LoyersEsp, I=ADeclarer, J=PaiementEffectif
-  const history = recap.slice(2) // skip 2 header rows
-    .filter(r => r[0] && (r[1] || r[2] || r[9]))
+  // Colonnes : A=DATE(idx0), B=HEURES(idx1), C=SALAIRE(idx2), D=NBRE(idx3), E=PRINCIPAL(idx4), F=%(idx5)
+  // L1 = header "DOSSIER DES PDF", L2 = headers colonnes → on skip 2 lignes
+  const history = recap.slice(2)
+    .filter(r => r[0] && (r[1] || r[2]))
     .map(r => {
       let d = r[0];
+      // Apps Script exporte les dates comme "Date(year,month,day)" (mois 0-indexé)
       if (typeof d === 'string') {
         const m = d.match(/Date\((\d+),(\d+)/);
         if (m) d = new Date(+m[1], +m[2], 1);
       }
       if (!(d instanceof Date) || isNaN(d)) return null;
-      // Paiement effectif = col J (index 9), fallback col C (index 2)
-      const salary = (typeof r[9] === 'number' && r[9] > 0) ? r[9] : (r[2] || 0);
+      // Salaire = col C (index 2)
+      const salary = typeof r[2] === 'number' ? r[2] : 0;
       if (salary <= 0) return null;
       return {
         month:  d.toLocaleString('fr-FR', {month:'short', year:'numeric'}),
@@ -121,8 +125,10 @@ function parseSheetData(raw) {
       .map(r => {
         const d = parseDate(r[1]);
         if (!d) return null;
-        // r[2] = durée en minutes (nombre brut comme 60, 90, 180...)
-        const durMin = typeof r[2] === 'number' ? r[2] : parseDuration(r[2]) * 60;
+        // r[2] = timedelta Apps Script = fraction de jour (ex: 60min → 0.04166...)
+        // ou string comme "0.041666..." — on convertit en minutes
+        const durationFrac = typeof r[2] === 'number' ? r[2] : parseFloat(r[2]) || 0;
+        const durMin = durationFrac < 1 ? Math.round(durationFrac * 24 * 60) : (durationFrac < 24 ? durationFrac * 60 : durationFrac);
         const durationH = durMin / 60;
         const end = new Date(d.getTime() + durMin * 60000);
         const done = isDone !== undefined ? isDone : end <= now;

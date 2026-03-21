@@ -1,97 +1,161 @@
 import { useState, useEffect, useCallback } from "react";
 
-// ── DATA (hardcoded from Google Sheet for demo) ───────────────────────────────
-const DATA = {
-  today: "Samedi 21 mars 2026",
-  month: "Mars 2026",
-  sheetId: "1XmLHIsf9P20tj2Art47qG7188WCP-SwCCRePjb-252c",
-  summary: {
-    presentH: 5,  presentE: 105,
-    futurH:   4,  futurE:   105,
-    totalH:   9,  totalE:   210,
-    nextH:    14, nextE:    345,
-    avgRate:  23.33, actifs: 2,
-  },
-  students: [
-    { code:"1", name:"Institut français", rate:25.45, presentH:0, presentE:0,  futurH:0, futurE:0,  totalH:0, totalE:0,   color:"#FF6B6B" },
-    { code:"2", name:"King's Corner",     rate:10.00, presentH:0, presentE:0,  futurH:0, futurE:0,  totalH:0, totalE:0,   color:"#4ECDC4" },
-    { code:"3", name:"Mark",              rate:15.00, presentH:3, presentE:45, futurH:1, futurE:15, totalH:4, totalE:60,  color:"#45B7D1" },
-    { code:"4", name:"Lycée Molière",     rate:14.33, presentH:0, presentE:0,  futurH:0, futurE:0,  totalH:0, totalE:0,   color:"#96CEB4" },
-    { code:"5", name:"Javi",              rate:30.00, presentH:2, presentE:60, futurH:3, futurE:90, totalH:5, totalE:150, color:"#FECA57" },
-  ],
-  prevMonth: {
-    label:"Février 2026", total:1114.05,
-    items:[
-      {name:"Institut français", h:41.42, e:1054.05},
-      {name:"Mark",              h:4,     e:60},
-    ]
-  },
-  nextMonth: {
-    label:"Avril 2026", total:345,
-    items:[
-      {name:"Mark", h:5, e:75},
-      {name:"Javi", h:9, e:270},
-    ]
-  },
-  courses: {
-    cur: [
-      {code:"3",name:"Mark",date:"Jeu 5 mars", time:"18:00",done:true},
-      {code:"3",name:"Mark",date:"Jeu 12 mars",time:"18:00",done:true},
-      {code:"3",name:"Mark",date:"Jeu 19 mars",time:"18:00",done:true},
-      {code:"3",name:"Mark",date:"Mar 24 mars",time:"18:00",done:false},
-      {code:"5",name:"Javi",date:"Lun 16 mars",time:"18:45",done:true},
-      {code:"5",name:"Javi",date:"Lun 23 mars",time:"18:45",done:false},
-      {code:"5",name:"Javi",date:"Mer 25 mars",time:"18:45",done:false},
-      {code:"5",name:"Javi",date:"Lun 30 mars",time:"18:45",done:false},
-    ],
-    prev: [
-      {code:"1",name:"Institut français",date:"Lun 2 fév", time:"10:30",done:true},
-      {code:"1",name:"Institut français",date:"Lun 2 fév", time:"16:30",done:true},
-      {code:"1",name:"Institut français",date:"Mar 3 fév", time:"16:00",done:true},
-      {code:"1",name:"Institut français",date:"Mer 5 fév", time:"10:30",done:true},
-      {code:"1",name:"Institut français",date:"Dim 9 fév", time:"15:00",done:true},
-      {code:"1",name:"Institut français",date:"Lun 10 fév",time:"09:00",done:true},
-      {code:"1",name:"Institut français",date:"Jeu 12 fév",time:"09:30",done:true},
-      {code:"1",name:"Institut français",date:"Ven 13 fév",time:"09:00",done:true},
-      {code:"1",name:"Institut français",date:"Lun 17 fév",time:"09:30",done:true},
-      {code:"1",name:"Institut français",date:"Mar 18 fév",time:"18:00",done:true},
-      {code:"3",name:"Mark",date:"Jeu 5 fév", time:"18:00",done:true},
-      {code:"3",name:"Mark",date:"Jeu 12 fév",time:"18:00",done:true},
-      {code:"3",name:"Mark",date:"Jeu 19 fév",time:"18:00",done:true},
-      {code:"3",name:"Mark",date:"Jeu 26 fév",time:"18:00",done:true},
-    ],
-    next: [
-      {code:"3",name:"Mark",date:"Jeu 2 avr", time:"18:00",done:false},
-      {code:"3",name:"Mark",date:"Jeu 9 avr", time:"18:00",done:false},
-      {code:"3",name:"Mark",date:"Jeu 16 avr",time:"18:00",done:false},
-      {code:"3",name:"Mark",date:"Jeu 23 avr",time:"18:00",done:false},
-      {code:"3",name:"Mark",date:"Jeu 30 avr",time:"18:00",done:false},
-      {code:"5",name:"Javi",date:"Mer 1 avr", time:"18:45",done:false},
-      {code:"5",name:"Javi",date:"Lun 6 avr", time:"18:45",done:false},
-      {code:"5",name:"Javi",date:"Mer 8 avr", time:"18:45",done:false},
-      {code:"5",name:"Javi",date:"Lun 13 avr",time:"18:45",done:false},
-      {code:"5",name:"Javi",date:"Mer 15 avr",time:"18:45",done:false},
-      {code:"5",name:"Javi",date:"Lun 20 avr",time:"18:45",done:false},
-      {code:"5",name:"Javi",date:"Mer 22 avr",time:"18:45",done:false},
-    ],
-  },
-  history: [
-    {month:"Jan 2025",salary:1692.79,hours:0,   client:"Institut français"},
-    {month:"Fév 2025",salary:1692.79,hours:0,   client:"Institut français"},
-    {month:"Mar 2025",salary:1561.27,hours:0,   client:"Institut français"},
-    {month:"Avr 2025",salary:0,      hours:0,   client:"—"},
-    {month:"Mai 2025",salary:1593.76,hours:42.67,client:"Institut français"},
-    {month:"Jun 2025",salary:1746.97,hours:77.87,client:"Institut français"},
-    {month:"Jul 2025",salary:0,      hours:0,   client:"—"},
-    {month:"Aoû 2025",salary:1160.99,hours:0,   client:"Chômage"},
-    {month:"Sep 2025",salary:2047.04,hours:110, client:"King's Corner + Chômage"},
-    {month:"Oct 2025",salary:1895.21,hours:110, client:"King's Corner + Mark"},
-    {month:"Nov 2025",salary:715.96, hours:42,  client:"Lycée Molière + IFZ + Mark"},
-    {month:"Déc 2025",salary:361.71, hours:2,   client:"Mark + Chômage"},
-    {month:"Jan 2026",salary:1040,   hours:3,   client:"Mark + Chômage"},
-    {month:"Fév 2026",salary:1955,   hours:45.42,client:"Mark + IFZ + Chômage"},
-    {month:"Mar 2026",salary:210,    hours:9,   client:"Mark + Javi"},
-  ],
+// ── API Apps Script ───────────────────────────────────────────────────────────
+const API_URL = "https://script.google.com/macros/s/AKfycbyqwSRqI7s_07NHiOX5kRMBVKXwdsomlBQ106Cq2ACXzOiYBBTiGhak-iBW4kiJZsxd/exec";
+
+// Couleurs élèves par code
+const STUDENT_COLORS_MAP = {"1":"#FF6B6B","2":"#4ECDC4","3":"#45B7D1","4":"#96CEB4","5":"#FECA57","6":"#FF9F43","7":"#48DBFB","8":"#FF9FF3"};
+
+// Parse une valeur de durée Google Sheets (nombre de minutes stocké comme fraction de jour ou nombre brut)
+function parseDuration(val) {
+  if (!val) return 0;
+  if (typeof val === 'number') {
+    // Si < 2, c'est probablement une fraction de jour (format time Google Sheets)
+    if (val < 2) return val * 24; // fraction de jour → heures
+    return val / 60; // minutes → heures
+  }
+  return 0;
+}
+
+// Parse une date Google Sheets (format "Date(year,month,day,...)" ou string dd/MM/yyyy HH:mm)
+function parseDate(val) {
+  if (!val) return null;
+  if (typeof val === 'string') {
+    // Format Apps Script exporté : "Date(2026,2,5,18,0,0)"
+    const m = String(val).match(/Date\((\d+),(\d+),(\d+),?(\d*),?(\d*)/);
+    if (m) return new Date(+m[1], +m[2], +m[3], +(m[4]||0), +(m[5]||0));
+    // Format dd/MM/yyyy HH:mm
+    const p = val.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/);
+    if (p) return new Date(+p[3], +p[2]-1, +p[1], +p[4], +p[5]);
+  }
+  return null;
+}
+
+// Transforme les données brutes du sheet en DATA structurée
+function parseSheetData(raw) {
+  const nomina = raw.nomina || [];
+  const recap  = raw.recap  || [];
+  const mois   = raw.mois   || [];
+  const moisM1 = raw.moisM1 || [];
+  const moisP1 = raw.moisP1 || [];
+
+  // ── NOMINA ──────────────────────────────────────────────────────────────────
+  // L1 : date du jour, L2 : mois
+  const today = String(nomina[0]?.[0] || "").replace(/[▶️◀️\s]+/g, ' ').trim();
+  const month = String(nomina[1]?.[0] || "").trim();
+
+  // Résumé lignes 4-11 (index 3-10)
+  const presentH = nomina[3]?.[3] || 0;
+  const presentE = nomina[3]?.[4] || 0;
+  const futurH   = nomina[5]?.[3] || 0;
+  const futurE   = nomina[5]?.[4] || 0;
+  const totalH   = nomina[7]?.[3] || 0;
+  const totalE   = nomina[7]?.[5] || nomina[7]?.[4] || 0;
+  const nextH    = nomina[10]?.[3] || 0;
+  const nextE    = nomina[10]?.[4] || 0;
+  const avgRate  = nomina[23]?.[2] || 0;
+  const actifs   = nomina[23]?.[10] || "";
+
+  // Élèves lignes 15-23 (index 14-22)
+  const students = nomina.slice(14, 23)
+    .filter(r => r[0] && typeof r[0] === 'number' && r[1])
+    .map(r => ({
+      code:     String(r[0]),
+      name:     String(r[1]).trim(),
+      rate:     r[2] || 0,
+      presentH: r[3] || 0,
+      presentE: r[4] || 0,
+      futurH:   r[5] || 0,
+      futurE:   r[6] || 0,
+      totalH:   r[7] || 0,
+      totalE:   r[8] || 0,
+      color:    STUDENT_COLORS_MAP[String(r[0])] || "#888",
+    }));
+
+  // Mois -1 (col G-I, index 6-8) lignes 3-12
+  const m1rows = nomina.slice(2, 12).filter(r => r[6] && String(r[6]) !== 'TOTAL ');
+  const m1TotalE = nomina[11]?.[8] || 0;
+  const m1Label  = String(nomina[1]?.[5] || "Mois précédent");
+
+  // Mois +1 (col J-L, index 9-11)
+  const m2rows = nomina.slice(2, 12).filter(r => r[9] && String(r[9]) !== 'TOTAL ');
+  const m2TotalE = nomina[11]?.[11] || 0;
+  const m2Label  = "Mois prochain";
+
+  // ── RÉCAP ───────────────────────────────────────────────────────────────────
+  const history = recap.slice(1)
+    .filter(r => r[0] && r[0] !== 'DATE' && (r[1] || r[2]))
+    .map(r => {
+      let d = r[0];
+      if (typeof d === 'string') { const m = d.match(/Date\((\d+),(\d+)/); if(m) d = new Date(+m[1],+m[2],1); }
+      if (!(d instanceof Date) || isNaN(d)) return null;
+      // Colonne J = paiement effectif
+      const salary = r[9] || r[2] || 0;
+      return {
+        month:  d.toLocaleString('fr-FR', {month:'short', year:'numeric'}).replace(' ', ' '),
+        salary: typeof salary === 'number' ? salary : 0,
+        hours:  r[1] || 0,
+        client: String(r[4] || '—'),
+      };
+    })
+    .filter(Boolean)
+    .filter(r => r.salary > 0 || r.hours > 0);
+
+  // ── COURS ──────────────────────────────────────────────────────────────────
+  function parseCourses(rows, isDone) {
+    const now = new Date();
+    return rows
+      .filter(r => r[0] && r[3] && /^\d$/.test(String(r[3]).trim()))
+      .map(r => {
+        const d = parseDate(r[1]);
+        if (!d) return null;
+        const durMin = parseDuration(r[2]) * 60;
+        const end = new Date(d.getTime() + durMin * 60000);
+        const done = isDone !== undefined ? isDone : end <= now;
+        const code = String(r[3]).trim();
+        const st = students.find(s => s.code === code);
+        return {
+          code,
+          name: st?.name || `Élève ${code}`,
+          date: d.toLocaleDateString('fr-FR', {weekday:'short', day:'numeric', month:'short'}),
+          time: d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'}),
+          done,
+          durationH: durMin / 60,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  return {
+    today, month,
+    summary: { presentH, presentE, futurH, futurE, totalH, totalE, nextH, nextE, avgRate, actifs: String(actifs) },
+    students,
+    prevMonth: {
+      label: m1Label,
+      total: m1TotalE,
+      items: m1rows.map(r => ({ name: String(r[6]), h: r[7]||0, e: r[8]||0 }))
+    },
+    nextMonth: {
+      label: m2Label,
+      total: m2TotalE,
+      items: m2rows.map(r => ({ name: String(r[9]), h: r[10]||0, e: r[11]||0 }))
+    },
+    courses: {
+      cur:  parseCourses(mois),
+      prev: parseCourses(moisM1, true),
+      next: parseCourses(moisP1, false),
+    },
+    history,
+    updatedAt: raw.updatedAt || null,
+  };
+}
+
+// ── DATA FALLBACK (affiché pendant le chargement) ─────────────────────────────
+const DATA_FALLBACK = {
+  today: "Chargement…", month: "—",
+  summary: { presentH:0,presentE:0,futurH:0,futurE:0,totalH:0,totalE:0,nextH:0,nextE:0,avgRate:0,actifs:"—" },
+  students: [], prevMonth:{label:"—",total:0,items:[]}, nextMonth:{label:"—",total:0,items:[]},
+  courses:{cur:[],prev:[],next:[]}, history:[],
 };
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -172,9 +236,9 @@ function SectionTitle({ children, accent }) {
 }
 
 // ── PAGE TABLEAU DE BORD ──────────────────────────────────────────────────────
-function PageAccueil() {
-  const s = DATA.summary;
-  const actifs = DATA.students.filter(s=>s.totalH>0);
+function PageAccueil({ data, onRefresh }) {
+  const s = data.summary;
+  const actifs = data.students.filter(s=>s.totalH>0);
   const totalE = actifs.reduce((a,s)=>a+s.totalE,0);
   const pct = s.totalH>0 ? Math.round((s.presentH/s.totalH)*100) : 0;
 
@@ -190,8 +254,8 @@ function PageAccueil() {
         {/* Decorative circles */}
         <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,borderRadius:"50%",background:"rgba(255,255,255,0.04)"}}/>
         <div style={{position:"absolute",bottom:-60,right:80,width:140,height:140,borderRadius:"50%",background:"rgba(255,255,255,0.04)"}}/>
-        <div style={{fontFamily:"DM Sans",fontSize:12,fontWeight:500,opacity:.6,letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>{DATA.today}</div>
-        <div style={{fontFamily:"Playfair Display",fontSize:34,fontWeight:900,lineHeight:1.1,marginBottom:16}}>{DATA.month}</div>
+        <div style={{fontFamily:"DM Sans",fontSize:12,fontWeight:500,opacity:.6,letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>{data.today}</div>
+        <div style={{fontFamily:"Playfair Display",fontSize:34,fontWeight:900,lineHeight:1.1,marginBottom:16}}>{data.month}</div>
 
         {/* Progress bar mois */}
         <div style={{marginBottom:20}}>
@@ -212,7 +276,7 @@ function PageAccueil() {
           </div>
           <div style={{width:1,background:"rgba(255,255,255,0.15)",margin:"4px 0"}}/>
           <div>
-            <div style={{fontFamily:"Playfair Display",fontSize:28,fontWeight:700,color:"#FECA57",lineHeight:1}}>{fmtM(DATA.nextMonth.total)}</div>
+            <div style={{fontFamily:"Playfair Display",fontSize:28,fontWeight:700,color:"#FECA57",lineHeight:1}}>{fmtM(data.nextMonth?.total||0)}</div>
             <div style={{fontSize:12,opacity:.6,fontFamily:"DM Sans",marginTop:3}}>Mois prochain estimé</div>
           </div>
         </div>
@@ -238,7 +302,7 @@ function PageAccueil() {
               ))}</tr>
             </thead>
             <tbody>
-              {DATA.students.map((st,i) => {
+              {data.students.map((st,i) => {
                 const col = sc(st.code);
                 const active = st.totalH > 0;
                 return (
@@ -278,8 +342,8 @@ function PageAccueil() {
       {/* Mois -1 / +1 */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
         {[
-          {data:DATA.prevMonth, accent:"#FF6B6B", icon:"◀", label:"Mois précédent"},
-          {data:DATA.nextMonth, accent:"#4ECDC4", icon:"▶", label:"Mois prochain"},
+          {data:data.prevMonth, accent:"#FF6B6B", icon:"◀", label:"Mois précédent"},
+          {data:data.nextMonth, accent:"#4ECDC4", icon:"▶", label:"Mois prochain"},
         ].map(({data:m,accent,icon,label},i)=>(
           <div key={i} className={`card fade-up-${i+3}`} style={{background:C.white,borderRadius:20,padding:"22px 24px",boxShadow:C.shadow,transition:"all .25s ease"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
@@ -305,10 +369,10 @@ function PageAccueil() {
 }
 
 // ── PAGE COURS ────────────────────────────────────────────────────────────────
-function PageCours() {
+function PageCours({ data }) {
   const [tab, setTab] = useState("cur");
   const tabs = [{id:"cur",label:"Mars 2026"},{id:"prev",label:"Fév 2026"},{id:"next",label:"Avr 2026"}];
-  const courses = DATA.courses[tab];
+  const courses = (data.courses && data.courses[tab]) || [];
 
   // Group by student
   const byCode = courses.reduce((a,e)=>{ if(!a[e.code]) a[e.code]=[]; a[e.code].push(e); return a; },{});
@@ -378,10 +442,10 @@ function PageCours() {
 }
 
 // ── PAGE HISTORIQUE + GRAPHIQUE ───────────────────────────────────────────────
-function PageRecap() {
+function PageRecap({ data }) {
   const [tooltip, setTooltip] = useState(null);
   const [chartModal, setChartModal] = useState(false);
-  const hist = DATA.history;
+  const hist = data.history;
   const maxS = Math.max(...hist.map(r=>r.salary), 100);
   const totalS = hist.reduce((a,r)=>a+r.salary,0);
   const withS = hist.filter(r=>r.salary>0);
@@ -557,14 +621,37 @@ const TABS = [
 ];
 
 export default function App() {
-  const [page, setPage] = useState("accueil");
+  const [page, setPage]   = useState("accueil");
+  const [data, setData]   = useState(DATA_FALLBACK);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(null);
+
+  async function fetchData() {
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch(API_URL);
+      const raw = await res.json();
+      if (raw.error) throw new Error(raw.error);
+      const parsed = parseSheetData(raw);
+      setData(parsed);
+      setLastUpdate(new Date());
+    } catch(e) {
+      setError("Impossible de charger les données : " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { fetchData(); }, []);
+
   return (
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"DM Sans, sans-serif"}}>
       <style>{globalCSS}</style>
 
       {/* Navigation responsive 2 lignes */}
       <nav style={{background:C.white,borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,zIndex:20,boxShadow:"0 1px 12px rgba(0,0,0,0.05)"}}>
-        {/* Ligne 1 : logo + date */}
+        {/* Ligne 1 : logo + date + refresh */}
         <div style={{maxWidth:980,margin:"0 auto",padding:"0 16px",display:"flex",alignItems:"center",justifyContent:"space-between",height:46,borderBottom:`1px solid ${C.border}`}}>
           <div style={{display:"flex",alignItems:"center",gap:9}}>
             <div style={{width:28,height:28,borderRadius:8,background:"linear-gradient(135deg,#1A1A2E,#2d2d5e)",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -577,14 +664,19 @@ export default function App() {
             </div>
             <span style={{fontFamily:"Playfair Display",fontWeight:700,fontSize:14,color:C.ink}}>Suivi cours</span>
           </div>
-          <span style={{background:"#1A1A2E",color:"white",borderRadius:20,padding:"4px 12px",fontSize:10,fontFamily:"DM Sans",fontWeight:500,letterSpacing:".04em"}}>Mars 2026</span>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {loading && <div style={{width:14,height:14,border:`2px solid #E8E8F0`,borderTopColor:C.ink,borderRadius:"50%",animation:"spin .7s linear infinite"}}/>}
+            {!loading && lastUpdate && <span style={{fontSize:9,color:C.ink3}}>{lastUpdate.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span>}
+            <button onClick={fetchData} disabled={loading} style={{background:"#1A1A2E",color:"white",borderRadius:20,padding:"4px 12px",fontSize:10,fontFamily:"DM Sans",fontWeight:500,letterSpacing:".04em",border:"none",cursor:"pointer"}}>
+              {data.month !== "—" && data.month !== "Chargement…" ? data.month : "↻"}
+            </button>
+          </div>
         </div>
-        {/* Ligne 2 : onglets flex-wrap, jamais de scroll horizontal */}
+        {/* Ligne 2 : onglets flex-wrap */}
         <div style={{maxWidth:980,margin:"0 auto",display:"flex",flexWrap:"wrap"}}>
           {TABS.map(t=>(
             <button key={t.id} className={`nav-tab${page===t.id?" active":""}`} onClick={()=>setPage(t.id)} style={{
-              flex:"1 1 auto",minWidth:0,
-              padding:"0 8px",border:"none",background:"transparent",
+              flex:"1 1 auto",minWidth:0,padding:"0 8px",border:"none",background:"transparent",
               fontFamily:"DM Sans",fontSize:12,fontWeight:page===t.id?600:400,
               color:page===t.id?C.ink:C.ink3,cursor:"pointer",
               borderBottom:`3px solid ${page===t.id?C.ink:"transparent"}`,
@@ -594,10 +686,26 @@ export default function App() {
         </div>
       </nav>
 
+      {/* Erreur */}
+      {error && (
+        <div style={{background:"#FFF0F0",border:"1px solid #FFD0D0",borderRadius:10,margin:"16px",padding:"12px 16px",fontSize:12,color:"#c0392b",fontFamily:"DM Sans",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span>{error}</span>
+          <button onClick={fetchData} style={{background:"#c0392b",color:"white",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11}}>Réessayer</button>
+        </div>
+      )}
+
+      {/* Écran de chargement initial */}
+      {loading && data.month === "—" && (
+        <div style={{textAlign:"center",padding:"80px 0",color:C.ink3,fontFamily:"DM Sans"}}>
+          <div style={{width:32,height:32,border:`3px solid ${C.border}`,borderTopColor:C.ink,borderRadius:"50%",animation:"spin .7s linear infinite",margin:"0 auto 16px"}}/>
+          <div style={{fontSize:14}}>Chargement depuis Google Sheets…</div>
+        </div>
+      )}
+
       {/* Pages */}
-      {page==="accueil" && <PageAccueil/>}
-      {page==="cours"   && <PageCours/>}
-      {page==="recap"   && <PageRecap/>}
+      {(!loading || data.month !== "—") && page==="accueil" && <PageAccueil data={data} onRefresh={fetchData}/>}
+      {(!loading || data.month !== "—") && page==="cours"   && <PageCours   data={data}/>}
+      {(!loading || data.month !== "—") && page==="recap"   && <PageRecap   data={data}/>}
     </div>
   );
 }

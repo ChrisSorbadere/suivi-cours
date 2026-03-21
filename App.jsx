@@ -380,6 +380,7 @@ function PageCours() {
 // ── PAGE HISTORIQUE + GRAPHIQUE ───────────────────────────────────────────────
 function PageRecap() {
   const [tooltip, setTooltip] = useState(null);
+  const [chartModal, setChartModal] = useState(false);
   const hist = DATA.history;
   const maxS = Math.max(...hist.map(r=>r.salary), 100);
   const totalS = hist.reduce((a,r)=>a+r.salary,0);
@@ -394,6 +395,7 @@ function PageRecap() {
   const iW=W-PL-PR, iH=H-PT-PB;
   const n=hist.length, bW=iW/n;
   function yp(v){ return iH*(1-v/Math.max(maxS,1)); }
+  function yp2(v){ return (H*2-PT-PB)*(1-v/Math.max(maxS,1)); }
 
   const gradColors = ["#FF6B6B","#FECA57","#4ECDC4","#45B7D1","#96CEB4"];
 
@@ -408,9 +410,44 @@ function PageRecap() {
         {trend!==null&&<KpiCard label="Tendance récente" value={`${trend>=0?"+":""}${trend.toFixed(1)}%`} color={trend>=0?"#96CEB4":"#FF6B6B"} delay="-4"/>}
       </div>
 
+      {/* Modal graphique plein écran */}
+      {chartModal&&(
+        <div onClick={()=>setChartModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:C.white,borderRadius:24,padding:"28px 24px",width:"100%",maxWidth:1100,maxHeight:"90vh",overflow:"auto",boxShadow:"0 24px 80px rgba(0,0,0,0.3)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <SectionTitle accent="#FECA57">Évolution des revenus</SectionTitle>
+              <button onClick={()=>setChartModal(false)} style={{border:"none",background:C.bg,borderRadius:8,width:36,height:36,fontSize:18,cursor:"pointer",color:C.ink2,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+            </div>
+            <svg viewBox={`0 0 ${W} ${H*2}`} style={{width:"100%",fontFamily:"DM Sans"}}>
+              <defs>{gradColors.map((c,i)=>(<linearGradient key={i} id={`gm${i}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={c} stopOpacity=".9"/><stop offset="100%" stopColor={c} stopOpacity=".3"/></linearGradient>))}</defs>
+              {[0,.25,.5,.75,1].map((f,i)=>{const v=maxS*f,y=PT+yp2(v);return <g key={i}><line x1={PL} x2={PL+iW} y1={y} y2={y} stroke="#f0f0f8" strokeWidth={1}/><text x={PL-6} y={y+4} textAnchor="end" fontSize={11} fill={C.ink3}>{Math.round(v)}€</text></g>;})}
+              {hist.map((r,i)=>{
+                const x=PL+i*bW+bW*.1,bw=bW*.8;
+                const bh=Math.max((r.salary/Math.max(maxS,1))*(H*2-PT-PB),0);
+                const by=PT+(H*2-PT-PB)-bh;
+                const isLast=i===hist.length-1;
+                const gi=i%gradColors.length;
+                return <g key={i}>
+                  <rect x={x} y={by} width={bw} height={bh} fill={`url(#gm${gi})`} rx={5} opacity={isLast?1:.8}/>
+                  <text x={PL+i*bW+bW/2} y={PT+(H*2-PT-PB)+22} textAnchor="middle" fontSize={10} fill={isLast?C.ink:C.ink3} fontWeight={isLast?700:400}>{r.month}</text>
+                  {r.salary>0&&<text x={PL+i*bW+bW/2} y={by-7} textAnchor="middle" fontSize={isLast?12:10} fill={isLast?C.ink:C.ink2} fontWeight={700}>{Math.round(r.salary)}€</text>}
+                </g>;
+              })}
+              <line x1={PL} x2={PL} y1={PT} y2={PT+(H*2-PT-PB)} stroke={C.border} strokeWidth={1}/>
+              <line x1={PL} x2={PL+iW} y1={PT+(H*2-PT-PB)} y2={PT+(H*2-PT-PB)} stroke={C.border} strokeWidth={1}/>
+            </svg>
+          </div>
+        </div>
+      )}
+
       {/* Graphique */}
       <div className="fade-up-2" style={{background:C.white,borderRadius:20,padding:"24px 28px",boxShadow:C.shadow,marginBottom:28}}>
-        <SectionTitle accent="#FECA57">Évolution des revenus</SectionTitle>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+          <SectionTitle accent="#FECA57">Évolution des revenus</SectionTitle>
+          <button onClick={()=>setChartModal(true)} title="Agrandir" style={{border:`1px solid ${C.border}`,background:C.bg,borderRadius:8,padding:"5px 10px",fontSize:12,cursor:"pointer",color:C.ink2,display:"flex",alignItems:"center",gap:5,fontFamily:"DM Sans"}}>
+            ⛶ Agrandir
+          </button>
+        </div>
         <div style={{overflowX:"auto"}}>
           <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",fontFamily:"DM Sans"}}>
             <defs>
@@ -525,58 +562,35 @@ export default function App() {
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"DM Sans, sans-serif"}}>
       <style>{globalCSS}</style>
 
-      {/* Navigation */}
-      <nav style={{
-        background:C.white,
-        borderBottom:`1px solid ${C.border}`,
-        position:"sticky",top:0,zIndex:20,
-        boxShadow:"0 1px 12px rgba(0,0,0,0.05)",
-      }}>
-        <div style={{maxWidth:980,margin:"0 auto",padding:"0 28px",display:"flex",alignItems:"stretch",gap:0}}>
-          {/* Logo */}
-          <div style={{
-            display:"flex",alignItems:"center",gap:10,
-            paddingRight:32,marginRight:8,
-            borderRight:`1px solid ${C.border}`,
-          }}>
-            <div style={{
-              width:32,height:32,borderRadius:10,
-              background:"linear-gradient(135deg,#1A1A2E,#2d2d5e)",
-              display:"flex",alignItems:"center",justifyContent:"center",
-            }}>
-              <svg width="16" height="16" viewBox="0 0 28 28" fill="none">
+      {/* Navigation responsive 2 lignes */}
+      <nav style={{background:C.white,borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,zIndex:20,boxShadow:"0 1px 12px rgba(0,0,0,0.05)"}}>
+        {/* Ligne 1 : logo + date */}
+        <div style={{maxWidth:980,margin:"0 auto",padding:"0 16px",display:"flex",alignItems:"center",justifyContent:"space-between",height:46,borderBottom:`1px solid ${C.border}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:9}}>
+            <div style={{width:28,height:28,borderRadius:8,background:"linear-gradient(135deg,#1A1A2E,#2d2d5e)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <svg width="14" height="14" viewBox="0 0 28 28" fill="none">
                 <rect x="4" y="4" width="9" height="9" rx="2" fill="#FECA57"/>
                 <rect x="15" y="4" width="9" height="9" rx="2" fill="#FF6B6B" opacity=".7"/>
                 <rect x="4" y="15" width="9" height="9" rx="2" fill="#4ECDC4" opacity=".7"/>
                 <rect x="15" y="15" width="9" height="9" rx="2" fill="#45B7D1"/>
               </svg>
             </div>
-            <span style={{fontFamily:"Playfair Display",fontWeight:700,fontSize:15,color:C.ink}}>Suivi cours</span>
+            <span style={{fontFamily:"Playfair Display",fontWeight:700,fontSize:14,color:C.ink}}>Suivi cours</span>
           </div>
-          {/* Tabs */}
+          <span style={{background:"#1A1A2E",color:"white",borderRadius:20,padding:"4px 12px",fontSize:10,fontFamily:"DM Sans",fontWeight:500,letterSpacing:".04em"}}>Mars 2026</span>
+        </div>
+        {/* Ligne 2 : onglets flex-wrap, jamais de scroll horizontal */}
+        <div style={{maxWidth:980,margin:"0 auto",display:"flex",flexWrap:"wrap"}}>
           {TABS.map(t=>(
-            <button key={t.id}
-              className={`nav-tab${page===t.id?" active":""}`}
-              onClick={()=>setPage(t.id)}
-              style={{
-                padding:"0 20px",border:"none",background:"transparent",
-                fontFamily:"DM Sans",fontSize:13,fontWeight:page===t.id?600:400,
-                color:page===t.id?C.ink:C.ink3,cursor:"pointer",
-                borderBottom:`3px solid ${page===t.id?C.ink:"transparent"}`,
-                height:54,transition:"all .2s",whiteSpace:"nowrap",
-              }}>
-              {t.label}
-            </button>
+            <button key={t.id} className={`nav-tab${page===t.id?" active":""}`} onClick={()=>setPage(t.id)} style={{
+              flex:"1 1 auto",minWidth:0,
+              padding:"0 8px",border:"none",background:"transparent",
+              fontFamily:"DM Sans",fontSize:12,fontWeight:page===t.id?600:400,
+              color:page===t.id?C.ink:C.ink3,cursor:"pointer",
+              borderBottom:`3px solid ${page===t.id?C.ink:"transparent"}`,
+              height:40,transition:"all .2s",whiteSpace:"nowrap",textAlign:"center",
+            }}>{t.label}</button>
           ))}
-          {/* Date pill */}
-          <div style={{marginLeft:"auto",display:"flex",alignItems:"center"}}>
-            <span style={{
-              background:"#1A1A2E",color:"white",
-              borderRadius:20,padding:"5px 14px",
-              fontSize:11,fontFamily:"DM Sans",fontWeight:500,
-              letterSpacing:".04em",
-            }}>Mars 2026</span>
-          </div>
         </div>
       </nav>
 

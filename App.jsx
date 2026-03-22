@@ -209,7 +209,7 @@ const fmtH = h => { if(!h||h<=0) return "0h"; const hh=Math.floor(h),mm=Math.rou
 
 // ── DESIGN SYSTEM ─────────────────────────────────────────────────────────────
 const C = {
-  bg:     "#D6DEE8",
+  bg:     "#B0BDCD",
   white:  "#FFFFFF",
   ink:    "#1A1A2E",
   ink2:   "#4A4A6A",

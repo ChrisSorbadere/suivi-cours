@@ -209,7 +209,7 @@ const fmtH = h => { if(!h||h<=0) return "0h"; const hh=Math.floor(h),mm=Math.rou
 
 // ── DESIGN SYSTEM ─────────────────────────────────────────────────────────────
 const C = {
-  bg:     "#FAFAF8",
+  bg:     "#D6DEE8",
   white:  "#FFFFFF",
   ink:    "#1A1A2E",
   ink2:   "#4A4A6A",
@@ -633,7 +633,7 @@ function PageRecap({ data }) {
               const delta=prev&&prev.salary>0?((r.salary-prev.salary)/prev.salary*100):null;
               const isLast=i===0;
               return (
-                <tr key={i} style={{background:isLast?"#FAFAF8":C.white}}>
+                <tr key={i} style={{background:isLast?"#C8D4E0":C.white}}>
                   <td style={{padding:"10px 14px",fontWeight:isLast?700:400,color:isLast?C.ink:C.ink2}}>{r.month}</td>
                   <td style={{padding:"10px 14px",color:"#45B7D1",fontWeight:500}}>{r.hours>0?fmtH(r.hours):"—"}</td>
                   <td style={{padding:"10px 14px"}}>

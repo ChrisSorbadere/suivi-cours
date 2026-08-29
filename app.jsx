@@ -1,6 +1,6 @@
 const { useState, useEffect, useCallback } = React;
 
-const APP_VERSION = "v4.0";
+const APP_VERSION = "v4.2";
 
 // ── API Apps Script ───────────────────────────────────────────────────────────
 const API_URL = "https://script.google.com/macros/s/AKfycbxiOA_ZhZFg1FSWf7JEII1xUbJNutGek20sg17Vr5_sWwPsTj3AI1VKim803oo7BGYGPg/exec";
@@ -29,6 +29,18 @@ function moisLisible(ym) {
   const m = String(ym).match(/^(\d{4})-(\d{2})$/);
   if (!m) return String(ym);
   return MM[(+m[2]) - 1] + ' ' + m[1];
+}
+
+/** N'autorise que chiffres, virgule/point et signe moins pendant la saisie */
+function nettoyerSaisie(v) {
+  return String(v).replace(/[^\d.,-]/g, '');
+}
+
+/** Convertit une saisie en nombre ("1 234,56" -> 1234.56) */
+function num(v) {
+  if (v === '' || v === null || v === undefined) return 0;
+  const n = parseFloat(String(v).replace(/\s/g, '').replace(',', '.'));
+  return isNaN(n) ? 0 : n;
 }
 
 /** Mois courant au format "AAAA-MM" */
@@ -1218,23 +1230,59 @@ function EditeurMois({ data, mois, onSaved, compact }) {
     setMsg(null);
   }, [mois, data]);
 
-  const totRev = revenus.reduce((a,c)=>a + (Number(vals[c.nom])||0), 0);
-  const totDep = depenses.reduce((a,c)=>a + (Number(vals[c.nom])||0), 0);
+  const totRev = revenus.reduce((a,c)=>a + num(vals[c.nom]), 0);
+  const totDep = depenses.reduce((a,c)=>a + num(vals[c.nom]), 0);
   const solde  = totRev - totDep;
-  const patrimoine = FIN_COMPTES.reduce((a,c)=>a + (Number(sold[c])||0), 0);
+  const patrimoine = FIN_COMPTES.reduce((a,c)=>a + num(sold[c]), 0);
 
   async function sauvegarder() {
     setSaving(true); setMsg(null);
     try {
       await apiPost('saveArchives', {
         mois: mois,
-        lignes: Object.keys(vals).map(k => ({ categorie: k, montant: Number(vals[k]) || 0 }))
+        lignes: Object.keys(vals).map(k => ({ categorie: k, montant: num(vals[k]) }))
       });
       await apiPost('saveSoldes', {
         mois: mois,
-        soldes: FIN_COMPTES.map(c => ({ compte: c, montant: Number(sold[c]) || 0 }))
+        soldes: FIN_COMPTES.map(c => ({ compte: c, montant: num(sold[c]) }))
       });
       setMsg({ ok:true, txt:'Enregistré' });
+      if (onSaved) await onSaved();
+    } catch (e) {
+      setMsg({ ok:false, txt:e.message });
+    } finally { setSaving(false); }
+  }
+
+  // Retire une ligne : masquage si elle a un historique, suppression si elle est vide
+  async function supprimerCategorie(nom) {
+    const toutes = data.finCategories || [];
+    const aHistorique = (data.finArchives || []).some(a => a.categorie === nom && a.montant !== 0);
+    const question = aHistorique
+      ? 'Retirer « ' + nom + ' » du formulaire ?\n\nLes montants déjà enregistrés resteront visibles dans les Archives.'
+      : 'Supprimer définitivement « ' + nom + ' » ?';
+    if (!window.confirm(question)) return;
+
+    setSaving(true); setMsg(null);
+    try {
+      const liste = aHistorique
+        ? toutes.map(c => c.nom === nom ? Object.assign({}, c, { actif: false }) : c)
+        : toutes.filter(c => c.nom !== nom);
+      await apiPost('saveCategories', { categories: liste });
+      setMsg({ ok:true, txt: aHistorique ? 'Ligne retirée, historique conservé' : 'Ligne supprimée' });
+      if (onSaved) await onSaved();
+    } catch (e) {
+      setMsg({ ok:false, txt:e.message });
+    } finally { setSaving(false); }
+  }
+
+  // Réaffiche une ligne précédemment masquée
+  async function restaurerCategorie(nom) {
+    setSaving(true); setMsg(null);
+    try {
+      const liste = (data.finCategories || [])
+        .map(c => c.nom === nom ? Object.assign({}, c, { actif: true }) : c);
+      await apiPost('saveCategories', { categories: liste });
+      setMsg({ ok:true, txt:'Ligne restaurée' });
       if (onSaved) await onSaved();
     } catch (e) {
       setMsg({ ok:false, txt:e.message });
@@ -1259,25 +1307,6 @@ function EditeurMois({ data, mois, onSaved, compact }) {
     } finally { setSaving(false); }
   }
 
-  function Ligne({ c, couleur }) {
-    return (
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-        <span style={{fontSize:13,color:C.ink2,fontFamily:"DM Sans",flex:1,minWidth:0}}>{c.nom}</span>
-        <input
-          type="number" inputMode="decimal" step="0.01"
-          value={vals[c.nom] === undefined ? '' : vals[c.nom]}
-          onChange={e => setVals(Object.assign({}, vals, { [c.nom]: e.target.value }))}
-          placeholder="0"
-          style={{
-            width:110, padding:"7px 10px", textAlign:"right",
-            border:`1.5px solid ${C.border}`, borderRadius:8,
-            fontFamily:"DM Sans", fontSize:13, fontWeight:600,
-            color: couleur, background:C.bg, outline:"none",
-          }}/>
-      </div>
-    );
-  }
-
   const colonne = (titre, liste, couleur, total) => (
     <div style={{flex:1,minWidth:260}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
@@ -1286,7 +1315,31 @@ function EditeurMois({ data, mois, onSaved, compact }) {
       </div>
       {liste.length === 0
         ? <div style={{fontSize:12,color:C.ink3,fontStyle:"italic",padding:"8px 0"}}>Aucune ligne</div>
-        : liste.map((c,i) => <Ligne key={i} c={c} couleur={couleur}/>)}
+        : liste.map((c,i) => (
+            <div key={c.nom} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+              <span style={{fontSize:13,color:C.ink2,fontFamily:"DM Sans",flex:1,minWidth:0}}>{c.nom}</span>
+              <input
+                type="text" inputMode="decimal"
+                value={vals[c.nom] === undefined ? '' : vals[c.nom]}
+                onChange={e => setVals(Object.assign({}, vals, { [c.nom]: nettoyerSaisie(e.target.value) }))}
+                placeholder="0"
+                style={{
+                  width:110, padding:"7px 10px", textAlign:"right",
+                  border:`1.5px solid ${C.border}`, borderRadius:8,
+                  fontFamily:"DM Sans", fontSize:13, fontWeight:600,
+                  color: couleur, background:C.bg, outline:"none",
+                }}/>
+              {!compact && (
+                <button onClick={()=>supprimerCategorie(c.nom)} disabled={saving}
+                  title={'Retirer ' + c.nom}
+                  style={{
+                    border:"none", background:"transparent", cursor: saving?"default":"pointer",
+                    color:C.ink3, fontSize:16, lineHeight:1, padding:"4px 2px",
+                    fontFamily:"DM Sans", opacity: saving?.4:.65,
+                  }}>×</button>
+              )}
+            </div>
+          ))}
     </div>
   );
 
@@ -1318,9 +1371,9 @@ function EditeurMois({ data, mois, onSaved, compact }) {
             <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
               <span style={{fontSize:13,color:C.ink2,fontFamily:"DM Sans"}}>{c}</span>
               <input
-                type="number" inputMode="decimal" step="0.01"
+                type="text" inputMode="decimal"
                 value={sold[c] === undefined ? '' : sold[c]}
-                onChange={e => setSold(Object.assign({}, sold, { [c]: e.target.value }))}
+                onChange={e => setSold(Object.assign({}, sold, { [c]: nettoyerSaisie(e.target.value) }))}
                 placeholder="0"
                 style={{
                   width:120, padding:"7px 10px", textAlign:"right",
@@ -1382,6 +1435,28 @@ function EditeurMois({ data, mois, onSaved, compact }) {
               opacity: (saving || !nouvelle.trim()) ? .45 : 1,
             }}>Ajouter</button>
           </div>
+
+          {/* Lignes masquées : restauration possible */}
+          {(data.finCategories || []).filter(c => !c.actif).length > 0 && (
+            <div style={{marginTop:16}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.ink3,textTransform:"uppercase",letterSpacing:".1em",fontFamily:"DM Sans",marginBottom:8}}>
+                Lignes masquées
+              </div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {(data.finCategories || []).filter(c => !c.actif).map((c,i) => (
+                  <button key={i} onClick={()=>restaurerCategorie(c.nom)} disabled={saving}
+                    style={{
+                      display:"inline-flex", alignItems:"center", gap:6,
+                      border:`1.5px dashed ${C.border}`, background:"transparent",
+                      borderRadius:20, padding:"5px 12px", cursor: saving?"default":"pointer",
+                      fontFamily:"DM Sans", fontSize:12, fontWeight:600, color:C.ink3,
+                    }}>
+                    {c.nom}<span style={{fontSize:14,lineHeight:1}}>↩</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

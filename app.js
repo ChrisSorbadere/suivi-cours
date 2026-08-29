@@ -3,7 +3,7 @@ const {
   useEffect,
   useCallback
 } = React;
-const APP_VERSION = "v5.1";
+const APP_VERSION = "v5.2";
 const API_URL = "https://script.google.com/macros/s/AKfycbxyKJD9etJlzioM09crYIGHXqxNGZXq0-jadNDz3YMGMYAoZfeZ4dNmNsdne4vilEtUHw/exec";
 const FIN_COMPTES = ['Épargne France', 'Épargne Espagne'];
 async function apiPost(action, payload) {
@@ -2850,14 +2850,37 @@ const TABS = [{
   id: "liens",
   label: "Liens"
 }];
+const CLE_CACHE = "suivi-cours-donnees";
+
+/** Dernier jeu de données reçu, conservé sur l'appareil */
+function lireCache() {
+  try {
+    const brut = window.localStorage.getItem(CLE_CACHE);
+    if (!brut) return null;
+    const o = JSON.parse(brut);
+    return (o && o.raw) ? o : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function ecrireCache(raw) {
+  try {
+    window.localStorage.setItem(CLE_CACHE, JSON.stringify({ raw: raw, at: Date.now() }));
+  } catch (e) {
+    // quota dépassé ou stockage indisponible : sans conséquence
+  }
+}
+
 function App() {
+  const cache = lireCache();
   const [page, setPage] = useState("situation");
-  const [data, setData] = useState(DATA_FALLBACK);
+  const [data, setData] = useState(cache ? parseSheetData(cache.raw) : DATA_FALLBACK);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [lastUpdate, setLastUpdate] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(cache ? new Date(cache.at) : null);
   const [dirty, setDirty] = useState(false);
-  const brut = React.useRef(null);
+  const brut = React.useRef(cache ? cache.raw : null);
   async function fetchData() {
     setLoading(true);
     setError(null);
@@ -2866,6 +2889,7 @@ function App() {
       const raw = await res.json();
       if (raw.error) throw new Error(raw.error);
       brut.current = raw;
+      ecrireCache(raw);
       setData(parseSheetData(raw));
       setLastUpdate(new Date());
     } catch (e) {
@@ -2885,6 +2909,7 @@ function App() {
         finSoldes: part.finSoldes
       });
       brut.current = complet;
+      ecrireCache(complet);
       setData(parseSheetData(complet));
       setLastUpdate(new Date());
       setDirty(false);

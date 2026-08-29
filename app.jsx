@@ -1,9 +1,41 @@
 const { useState, useEffect, useCallback } = React;
 
-const APP_VERSION = "v3.5";
+const APP_VERSION = "v4.0";
 
 // ── API Apps Script ───────────────────────────────────────────────────────────
 const API_URL = "https://script.google.com/macros/s/AKfycbxiOA_ZhZFg1FSWf7JEII1xUbJNutGek20sg17Vr5_sWwPsTj3AI1VKim803oo7BGYGPg/exec";
+
+// Comptes d'épargne suivis (patrimoine)
+const FIN_COMPTES = ['Épargne France', 'Épargne Espagne'];
+
+/**
+ * Envoi de données vers Apps Script.
+ * Content-Type text/plain : évite le pre-flight CORS que Apps Script ne gère pas.
+ */
+async function apiPost(action, payload) {
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: action, payload: payload })
+  });
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || 'Erreur inconnue');
+  return json.result;
+}
+
+/** "2026-08" -> "août 2026" */
+function moisLisible(ym) {
+  const MM = ["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
+  const m = String(ym).match(/^(\d{4})-(\d{2})$/);
+  if (!m) return String(ym);
+  return MM[(+m[2]) - 1] + ' ' + m[1];
+}
+
+/** Mois courant au format "AAAA-MM" */
+function moisCourantYM() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
 
 // Couleurs élèves par code
 const STUDENT_COLORS_MAP = {"1":"#FF6B6B","2":"#4ECDC4","3":"#45B7D1","4":"#96CEB4","5":"#FECA57","6":"#FF9F43","7":"#48DBFB","8":"#FF9FF3"};
@@ -288,6 +320,32 @@ function parseSheetData(raw) {
       .filter(Boolean);
   }
 
+  // ── FINANCES (Fin_Categories / Fin_Archives / Fin_Soldes) ───────────────────
+  // Feuilles en format long : une ligne = (mois, clé, montant)
+  const finCategories = (raw.finCategories || []).slice(1)
+    .filter(r => r && String(r[0]).trim())
+    .map(r => ({
+      nom:   String(r[0]).trim(),
+      type:  String(r[1]).trim() === 'depense' ? 'depense' : 'revenu',
+      actif: r[2] !== false && String(r[2]).toUpperCase() !== 'FALSE'
+    }));
+
+  const finArchives = (raw.finArchives || []).slice(1)
+    .filter(r => r && String(r[0]).trim())
+    .map(r => ({
+      mois:      String(r[0]).trim(),
+      categorie: String(r[1]).trim(),
+      montant:   parseNum(r[2])
+    }));
+
+  const finSoldes = (raw.finSoldes || []).slice(1)
+    .filter(r => r && String(r[0]).trim())
+    .map(r => ({
+      mois:    String(r[0]).trim(),
+      compte:  String(r[1]).trim(),
+      montant: parseNum(r[2])
+    }));
+
   return {
     today, month,
     summary: {
@@ -315,6 +373,9 @@ function parseSheetData(raw) {
     history,
     graph,
     revenuMoyen: { parAnnee: moyenneParAnnee, annees: anneesDisponibles, anneeActuelle },
+    finCategories: finCategories,
+    finArchives:   finArchives,
+    finSoldes:     finSoldes,
     updatedAt: raw.updatedAt || null,
   };
 }
@@ -326,6 +387,7 @@ const DATA_FALLBACK = {
   students: [], prevMonth:{label:"—",total:0,items:[]}, nextMonth:{label:"—",total:0,items:[]},
   courses:{cur:[],prev:[],next:[]}, history:[], graph:[],
   revenuMoyen:{parAnnee:{},annees:[],anneeActuelle:new Date().getFullYear()},
+  finCategories:[], finArchives:[], finSoldes:[],
 };
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -1127,12 +1189,370 @@ function PageLiens() {
   );
 }
 
+// ── ÉDITEUR D'UN MOIS (partagé Situation / Archives) ─────────────────────────
+function EditeurMois({ data, mois, onSaved, compact }) {
+  const cats = (data.finCategories || []).filter(c => c.actif);
+  const revenus  = cats.filter(c => c.type === 'revenu');
+  const depenses = cats.filter(c => c.type === 'depense');
+
+  const [vals, setVals]       = useState({});
+  const [sold, setSold]       = useState({});
+  const [saving, setSaving]   = useState(false);
+  const [msg, setMsg]         = useState(null);
+  const [nouvelle, setNouvelle] = useState('');
+  const [typeNouv, setTypeNouv] = useState('depense');
+
+  // Charger les valeurs du mois sélectionné
+  useEffect(() => {
+    const v = {};
+    cats.forEach(c => { v[c.nom] = ''; });
+    (data.finArchives || []).filter(a => a.mois === mois)
+      .forEach(a => { v[a.categorie] = a.montant; });
+    setVals(v);
+
+    const s = {};
+    FIN_COMPTES.forEach(c => { s[c] = ''; });
+    (data.finSoldes || []).filter(x => x.mois === mois)
+      .forEach(x => { s[x.compte] = x.montant; });
+    setSold(s);
+    setMsg(null);
+  }, [mois, data]);
+
+  const totRev = revenus.reduce((a,c)=>a + (Number(vals[c.nom])||0), 0);
+  const totDep = depenses.reduce((a,c)=>a + (Number(vals[c.nom])||0), 0);
+  const solde  = totRev - totDep;
+  const patrimoine = FIN_COMPTES.reduce((a,c)=>a + (Number(sold[c])||0), 0);
+
+  async function sauvegarder() {
+    setSaving(true); setMsg(null);
+    try {
+      await apiPost('saveArchives', {
+        mois: mois,
+        lignes: Object.keys(vals).map(k => ({ categorie: k, montant: Number(vals[k]) || 0 }))
+      });
+      await apiPost('saveSoldes', {
+        mois: mois,
+        soldes: FIN_COMPTES.map(c => ({ compte: c, montant: Number(sold[c]) || 0 }))
+      });
+      setMsg({ ok:true, txt:'Enregistré' });
+      if (onSaved) await onSaved();
+    } catch (e) {
+      setMsg({ ok:false, txt:e.message });
+    } finally { setSaving(false); }
+  }
+
+  async function ajouterCategorie() {
+    const nom = nouvelle.trim();
+    if (!nom) return;
+    if (cats.some(c => c.nom.toLowerCase() === nom.toLowerCase())) {
+      setMsg({ ok:false, txt:'Cette catégorie existe déjà' }); return;
+    }
+    setSaving(true); setMsg(null);
+    try {
+      const liste = (data.finCategories || []).concat([{ nom: nom, type: typeNouv, actif: true }]);
+      await apiPost('saveCategories', { categories: liste });
+      setNouvelle('');
+      setMsg({ ok:true, txt:'Catégorie ajoutée' });
+      if (onSaved) await onSaved();
+    } catch (e) {
+      setMsg({ ok:false, txt:e.message });
+    } finally { setSaving(false); }
+  }
+
+  function Ligne({ c, couleur }) {
+    return (
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+        <span style={{fontSize:13,color:C.ink2,fontFamily:"DM Sans",flex:1,minWidth:0}}>{c.nom}</span>
+        <input
+          type="number" inputMode="decimal" step="0.01"
+          value={vals[c.nom] === undefined ? '' : vals[c.nom]}
+          onChange={e => setVals(Object.assign({}, vals, { [c.nom]: e.target.value }))}
+          placeholder="0"
+          style={{
+            width:110, padding:"7px 10px", textAlign:"right",
+            border:`1.5px solid ${C.border}`, borderRadius:8,
+            fontFamily:"DM Sans", fontSize:13, fontWeight:600,
+            color: couleur, background:C.bg, outline:"none",
+          }}/>
+      </div>
+    );
+  }
+
+  const colonne = (titre, liste, couleur, total) => (
+    <div style={{flex:1,minWidth:260}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
+        <span style={{fontSize:11,fontWeight:700,color:couleur,textTransform:"uppercase",letterSpacing:".1em",fontFamily:"DM Sans"}}>{titre}</span>
+        <span style={{fontFamily:"Playfair Display",fontSize:17,fontWeight:700,color:couleur}}>{fmtM(total)}</span>
+      </div>
+      {liste.length === 0
+        ? <div style={{fontSize:12,color:C.ink3,fontStyle:"italic",padding:"8px 0"}}>Aucune ligne</div>
+        : liste.map((c,i) => <Ligne key={i} c={c} couleur={couleur}/>)}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{display:"flex",gap:28,flexWrap:"wrap",marginBottom:20}}>
+        {colonne('Revenus',  revenus,  '#2E8B57', totRev)}
+        {colonne('Dépenses', depenses, '#E04848', totDep)}
+      </div>
+
+      {/* Solde du mois */}
+      <div style={{
+        background: solde>=0 ? '#EAF6EF' : '#FDECEC',
+        border:`1px solid ${solde>=0 ? '#BFE3CD' : '#F5C6C6'}`,
+        borderRadius:12, padding:"12px 18px", marginBottom:20,
+        display:"flex", justifyContent:"space-between", alignItems:"center",
+      }}>
+        <span style={{fontSize:12,fontWeight:600,color:C.ink2,textTransform:"uppercase",letterSpacing:".08em",fontFamily:"DM Sans"}}>Solde du mois</span>
+        <span style={{fontFamily:"Playfair Display",fontSize:24,fontWeight:900,color: solde>=0 ? '#2E8B57' : '#E04848'}}>{fmtM(solde)}</span>
+      </div>
+
+      {/* Patrimoine (stocks) */}
+      {!compact && (
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:11,fontWeight:700,color:'#1F7A99',textTransform:"uppercase",letterSpacing:".1em",fontFamily:"DM Sans",marginBottom:8}}>
+            Épargne — solde en fin de mois
+          </div>
+          {FIN_COMPTES.map((c,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+              <span style={{fontSize:13,color:C.ink2,fontFamily:"DM Sans"}}>{c}</span>
+              <input
+                type="number" inputMode="decimal" step="0.01"
+                value={sold[c] === undefined ? '' : sold[c]}
+                onChange={e => setSold(Object.assign({}, sold, { [c]: e.target.value }))}
+                placeholder="0"
+                style={{
+                  width:120, padding:"7px 10px", textAlign:"right",
+                  border:`1.5px solid ${C.border}`, borderRadius:8,
+                  fontFamily:"DM Sans", fontSize:13, fontWeight:600,
+                  color:'#1F7A99', background:C.bg, outline:"none",
+                }}/>
+            </div>
+          ))}
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:10,paddingTop:8,borderTop:`2px solid ${C.border}`}}>
+            <span style={{fontSize:12,fontWeight:600,color:C.ink2,fontFamily:"DM Sans"}}>Total patrimoine</span>
+            <span style={{fontFamily:"Playfair Display",fontSize:19,fontWeight:800,color:'#1F7A99'}}>{fmtM(patrimoine)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+        <button onClick={sauvegarder} disabled={saving} style={{
+          padding:"11px 24px", borderRadius:10, border:"none",
+          background: saving ? C.ink3 : C.ink, color:"#fff",
+          fontFamily:"DM Sans", fontSize:14, fontWeight:700,
+          cursor: saving ? "default" : "pointer",
+        }}>{saving ? 'Enregistrement…' : 'Enregistrer'}</button>
+        {msg && (
+          <span style={{fontSize:13,fontWeight:600,fontFamily:"DM Sans",color: msg.ok ? '#2E8B57' : '#E04848'}}>
+            {msg.ok ? '✓ ' : '✗ '}{msg.txt}
+          </span>
+        )}
+      </div>
+
+      {/* Ajout de catégorie */}
+      {!compact && (
+        <div style={{marginTop:22,paddingTop:18,borderTop:`1px solid ${C.border}`}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.ink3,textTransform:"uppercase",letterSpacing:".1em",fontFamily:"DM Sans",marginBottom:10}}>
+            Ajouter une ligne
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <input
+              value={nouvelle} onChange={e=>setNouvelle(e.target.value)}
+              placeholder="Nom (ex. Mutuelle)"
+              style={{
+                flex:1, minWidth:160, padding:"9px 12px",
+                border:`1.5px solid ${C.border}`, borderRadius:10,
+                fontFamily:"DM Sans", fontSize:13, background:C.bg, outline:"none",
+              }}/>
+            <select value={typeNouv} onChange={e=>setTypeNouv(e.target.value)} style={{
+              padding:"9px 12px", border:`1.5px solid ${C.border}`, borderRadius:10,
+              fontFamily:"DM Sans", fontSize:13, fontWeight:600, background:C.bg, outline:"none", cursor:"pointer",
+            }}>
+              <option value="depense">Dépense</option>
+              <option value="revenu">Revenu</option>
+            </select>
+            <button onClick={ajouterCategorie} disabled={saving || !nouvelle.trim()} style={{
+              padding:"9px 18px", borderRadius:10, border:`1.5px solid ${C.ink}`,
+              background:"transparent", color:C.ink,
+              fontFamily:"DM Sans", fontSize:13, fontWeight:700,
+              cursor: (saving || !nouvelle.trim()) ? "default" : "pointer",
+              opacity: (saving || !nouvelle.trim()) ? .45 : 1,
+            }}>Ajouter</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── PAGE SITUATION — actif / passif du mois + patrimoine ─────────────────────
+function PageSituation({ data, onRefresh }) {
+  const [mois, setMois] = useState(moisCourantYM());
+
+  // Liste des mois proposés : 24 derniers mois
+  const options = [];
+  const d0 = new Date();
+  for (let i = 0; i < 24; i++) {
+    const d = new Date(d0.getFullYear(), d0.getMonth() - i, 1);
+    options.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+  }
+
+  const pret = (data.finCategories || []).length > 0;
+
+  return (
+    <div style={{padding:"32px 28px",maxWidth:980,margin:"0 auto"}}>
+      <div className="fade-up" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12,marginBottom:20}}>
+        <SectionTitle accent="#96CEB4">Situation</SectionTitle>
+        <select value={mois} onChange={e=>setMois(e.target.value)} style={{
+          padding:"10px 16px", borderRadius:10, border:`2px solid ${C.border}`,
+          background:C.white, color:C.ink, fontFamily:"DM Sans",
+          fontSize:14, fontWeight:700, cursor:"pointer", outline:"none",
+        }}>
+          {options.map(m => <option key={m} value={m}>{moisLisible(m)}</option>)}
+        </select>
+      </div>
+
+      <div className="fade-up-2" style={{background:C.white,borderRadius:20,padding:"26px 28px",boxShadow:C.shadow}}>
+        {pret
+          ? <EditeurMois data={data} mois={mois} onSaved={onRefresh}/>
+          : <div style={{fontSize:13,color:C.ink3,fontFamily:"DM Sans",lineHeight:1.6}}>
+              Les catégories ne sont pas encore initialisées.<br/>
+              Dans Google&nbsp;Sheets : menu <strong>⚙️ Finances → Initialiser</strong>, puis reviens ici et actualise.
+            </div>}
+      </div>
+    </div>
+  );
+}
+
+// ── PAGE ARCHIVES — historique complet, filtres, correction ──────────────────
+function PageArchives({ data, onRefresh }) {
+  const archives = data.finArchives || [];
+  const soldes   = data.finSoldes   || [];
+  const cats     = data.finCategories || [];
+  const typeDe   = {};
+  cats.forEach(c => { typeDe[c.nom] = c.type; });
+
+  const [annee, setAnnee]   = useState('toutes');
+  const [secteur, setSecteur] = useState('tous');
+  const [editMois, setEditMois] = useState(null);
+
+  // Mois présents dans les archives ou les soldes
+  const moisSet = {};
+  archives.forEach(a => { moisSet[a.mois] = true; });
+  soldes.forEach(s => { moisSet[s.mois] = true; });
+  const tousMois = Object.keys(moisSet).sort().reverse();
+
+  const annees = [];
+  tousMois.forEach(m => { const y = m.slice(0,4); if (annees.indexOf(y) === -1) annees.push(y); });
+
+  const moisFiltres = tousMois.filter(m => annee === 'toutes' || m.slice(0,4) === annee);
+
+  // Agrégats par mois
+  const lignes = moisFiltres.map(m => {
+    const duMois = archives.filter(a => a.mois === m)
+      .filter(a => secteur === 'tous' || a.categorie === secteur);
+    const rev = duMois.filter(a => typeDe[a.categorie] !== 'depense').reduce((s,a)=>s+a.montant, 0);
+    const dep = duMois.filter(a => typeDe[a.categorie] === 'depense').reduce((s,a)=>s+a.montant, 0);
+    const pat = soldes.filter(s => s.mois === m).reduce((s,x)=>s+x.montant, 0);
+    return { mois:m, rev, dep, solde: rev - dep, pat };
+  });
+
+  const totRev = lignes.reduce((a,l)=>a+l.rev, 0);
+  const totDep = lignes.reduce((a,l)=>a+l.dep, 0);
+
+  const selStyle = {
+    padding:"9px 14px", borderRadius:10, border:`2px solid ${C.border}`,
+    background:C.white, color:C.ink, fontFamily:"DM Sans",
+    fontSize:13, fontWeight:600, cursor:"pointer", outline:"none",
+  };
+
+  return (
+    <div style={{padding:"32px 28px",maxWidth:980,margin:"0 auto"}}>
+      <div className="fade-up" style={{marginBottom:18}}>
+        <SectionTitle accent="#45B7D1">Archives</SectionTitle>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <select value={annee} onChange={e=>setAnnee(e.target.value)} style={selStyle}>
+            <option value="toutes">Toutes les années</option>
+            {annees.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <select value={secteur} onChange={e=>setSecteur(e.target.value)} style={selStyle}>
+            <option value="tous">Tous les secteurs</option>
+            {cats.map((c,i) => <option key={i} value={c.nom}>{c.nom}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Synthèse de la sélection */}
+      <div className="fade-up" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14,marginBottom:22}}>
+        <KpiCard label="Revenus" value={fmtM(totRev)} color="#2E8B57"/>
+        <KpiCard label="Dépenses" value={fmtM(totDep)} color="#E04848" delay="-2"/>
+        <KpiCard label="Solde cumulé" value={fmtM(totRev - totDep)} color={totRev-totDep>=0?"#45B7D1":"#E04848"} delay="-3"/>
+        <KpiCard label="Mois enregistrés" value={String(lignes.length)} color="#FECA57" delay="-4"/>
+      </div>
+
+      {/* Tableau */}
+      <div className="fade-up-2" style={{background:C.white,borderRadius:20,padding:"24px 28px",boxShadow:C.shadow}}>
+        {lignes.length === 0 ? (
+          <div style={{fontSize:13,color:C.ink3,fontFamily:"DM Sans",textAlign:"center",padding:"20px 0"}}>
+            Aucune donnée enregistrée pour cette sélection.
+          </div>
+        ) : (
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:"0 3px",fontFamily:"DM Sans",fontSize:12}}>
+              <thead>
+                <tr>{["Mois","Revenus","Dépenses","Solde","Patrimoine",""].map(h=>(
+                  <th key={h} style={{textAlign:"left",padding:"8px 12px",fontSize:10,fontWeight:600,color:C.ink3,textTransform:"uppercase",letterSpacing:".08em",borderBottom:`2px solid ${C.border}`}}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {lignes.map((l,i)=>(
+                  <tr key={i} style={{background:i%2===0?"#F4F7FA":C.white}}>
+                    <td style={{padding:"10px 12px",fontWeight:600,color:C.ink}}>{moisLisible(l.mois)}</td>
+                    <td style={{padding:"10px 12px",color:"#2E8B57",fontWeight:500}}>{l.rev>0?fmtM(l.rev):"—"}</td>
+                    <td style={{padding:"10px 12px",color:"#E04848",fontWeight:500}}>{l.dep>0?fmtM(l.dep):"—"}</td>
+                    <td style={{padding:"10px 12px"}}>
+                      <span style={{background:l.solde>=0?"#2E8B5718":"#E0484818",color:l.solde>=0?"#2E8B57":"#E04848",padding:"4px 10px",borderRadius:6,fontWeight:700}}>{fmtM(l.solde)}</span>
+                    </td>
+                    <td style={{padding:"10px 12px",color:"#1F7A99",fontWeight:500}}>{l.pat>0?fmtM(l.pat):"—"}</td>
+                    <td style={{padding:"10px 12px"}}>
+                      <button onClick={()=>setEditMois(editMois===l.mois?null:l.mois)} style={{
+                        border:`1.5px solid ${C.border}`, background:"transparent",
+                        borderRadius:8, padding:"5px 12px", cursor:"pointer",
+                        fontFamily:"DM Sans", fontSize:12, fontWeight:600, color:C.ink2,
+                      }}>{editMois===l.mois ? 'Fermer' : 'Corriger'}</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Éditeur inline du mois sélectionné */}
+        {editMois && (
+          <div style={{marginTop:22,paddingTop:20,borderTop:`2px solid ${C.border}`}}>
+            <div style={{fontFamily:"Playfair Display",fontSize:17,fontWeight:700,color:C.ink,marginBottom:14}}>
+              Correction — {moisLisible(editMois)}
+            </div>
+            <EditeurMois data={data} mois={editMois} onSaved={onRefresh}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 const TABS = [
   {id:"accueil",label:"Tableau de bord"},
   {id:"cours",  label:"Cours du mois"},
   {id:"recap",  label:"Historique"},
   {id:"analyse",label:"Analyse"},
+  {id:"situation",label:"Situation"},
+  {id:"archives", label:"Archives"},
   {id:"liens",  label:"Liens"},
 ];
 
@@ -1243,6 +1663,8 @@ function App() {
       {(!loading || data.month !== "—") && page==="cours"   && <PageCours   data={data}/>}
       {(!loading || data.month !== "—") && page==="recap"   && <PageRecap   data={data}/>}
       {(!loading || data.month !== "—") && page==="analyse" && <PageAnalyse data={data}/>}
+      {(!loading || data.month !== "—") && page==="situation" && <PageSituation data={data} onRefresh={fetchData}/>}
+      {(!loading || data.month !== "—") && page==="archives"  && <PageArchives  data={data} onRefresh={fetchData}/>}
       {page==="liens" && <PageLiens/>}
     </div>
   );

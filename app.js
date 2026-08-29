@@ -3,9 +3,9 @@ const {
   useEffect,
   useCallback
 } = React;
-const APP_VERSION = "v5.3";
+const APP_VERSION = "v5.4";
 const API_URL = "https://script.google.com/macros/s/AKfycbxyKJD9etJlzioM09crYIGHXqxNGZXq0-jadNDz3YMGMYAoZfeZ4dNmNsdne4vilEtUHw/exec";
-const FIN_COMPTES = ['Épargne France', 'Épargne Espagne'];
+const FIN_COMPTES = ['Compte courant', 'Épargne France', 'Épargne Espagne'];
 async function apiPost(action, payload) {
   const res = await fetch(API_URL, {
     method: 'POST',
@@ -2383,7 +2383,7 @@ function EditeurMois({
       fontFamily: "DM Sans",
       marginBottom: 8
     }
-  }, "Épargne — solde en fin de mois"), FIN_COMPTES.map((c, i) => React.createElement("div", {
+  }, "Comptes — solde en fin de mois"), FIN_COMPTES.map((c, i) => React.createElement("div", {
     key: i,
     style: {
       display: "flex",

@@ -10,11 +10,12 @@
     <meta name="apple-mobile-web-app-title" content="Suivi Cours" />
     <meta name="theme-color" content="#1A1A2E" />
     <style>
-      html, body { margin: 0; background: #D6DEE8; overscroll-behavior-y: contain; }
-      #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; font-family:sans-serif; color:#666; text-align:center; padding:0 24px; }
-      #loading .spin { width:32px; height:32px; border:3px solid #ccc; border-top-color:#1A1A2E; border-radius:50%; animation:spin .7s linear infinite; margin-bottom:16px; }
+      html, body { margin:0; background:#D6DEE8; overscroll-behavior-y: contain; }
+      #loading { display:flex; flex-direction:column; align-items:center; justify-content:center;
+                 min-height:100vh; font-family:sans-serif; color:#666; text-align:center; padding:0 24px; }
+      #loading .spin { width:32px; height:32px; border:3px solid #ccc; border-top-color:#1A1A2E;
+                       border-radius:50%; animation:spin .7s linear infinite; margin-bottom:16px; }
       #loading .err { color:#c0392b; font-size:13px; margin-top:12px; max-width:320px; }
-      #loading a { color:#1A1A2E; }
       @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
@@ -22,35 +23,30 @@
     <div id="root">
       <div id="loading">
         <div class="spin"></div>
-        <div id="loadmsg">Démarrage de l'application…</div>
+        <div id="loadmsg">Démarrage…</div>
       </div>
     </div>
 
-    <!-- React via jsDelivr (CDN plus fiable que unpkg) -->
     <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
     <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 
-    <!-- Vérification du chargement des bibliothèques -->
     <script>
       window.addEventListener('load', function () {
         setTimeout(function () {
           var msg = document.getElementById('loadmsg');
-          if (typeof React === 'undefined' || typeof ReactDOM === 'undefined' || typeof Babel === 'undefined') {
-            if (msg) {
-              msg.innerHTML = 'Les bibliothèques n\'ont pas pu se charger.<div class="err">Vérifie ta connexion internet, puis recharge la page. Si le problème persiste, ferme et rouvre l\'application.</div>';
-              var sp = document.querySelector('#loading .spin');
-              if (sp) sp.style.display = 'none';
-            }
+          if (msg && (typeof React === 'undefined' || typeof ReactDOM === 'undefined')) {
+            msg.innerHTML = "Les bibliothèques n'ont pas pu se charger." +
+              '<div class="err">Vérifie ta connexion, puis recharge la page.</div>';
+            var sp = document.querySelector('#loading .spin');
+            if (sp) sp.style.display = 'none';
           }
         }, 5000);
       });
     </script>
 
-    <!-- Application -->
-    <script type="text/babel" data-presets="react" src="./app.jsx"></script>
+    <!-- Application déjà compilée : plus de Babel, démarrage immédiat -->
+    <script src="./app.js"></script>
 
-    <!-- Service Worker -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {

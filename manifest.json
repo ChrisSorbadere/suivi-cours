@@ -1,7 +1,7 @@
 {
-  "name": "Suivi Cours",
-  "short_name": "Suivi Cours",
-  "description": "Suivi des cours et revenus",
+  "name": "Comptes",
+  "short_name": "Comptes",
+  "description": "Suivi des revenus, dépenses et patrimoine",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

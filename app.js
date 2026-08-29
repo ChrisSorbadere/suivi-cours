@@ -3,7 +3,7 @@ const {
   useEffect,
   useCallback
 } = React;
-const APP_VERSION = "v5.2";
+const APP_VERSION = "v5.3";
 const API_URL = "https://script.google.com/macros/s/AKfycbxyKJD9etJlzioM09crYIGHXqxNGZXq0-jadNDz3YMGMYAoZfeZ4dNmNsdne4vilEtUHw/exec";
 const FIN_COMPTES = ['Épargne France', 'Épargne Espagne'];
 async function apiPost(action, payload) {
@@ -2030,25 +2030,62 @@ function EditeurMois({
   const [msg, setMsg] = useState(null);
   const [nouvelle, setNouvelle] = useState('');
   const [typeNouv, setTypeNouv] = useState('depense');
-  useEffect(() => {
+  const [reconduitDe, setReconduitDe] = useState(null);
+
+  // Dernier mois ANTÉRIEUR contenant des données, pour la reconduction
+  function moisSourceAvant(cible) {
+    const arch = data.finArchives || [];
+    const sol = data.finSoldes || [];
+    const dispo = {};
+    arch.forEach(a => {
+      if (a.mois < cible) dispo[a.mois] = true;
+    });
+    sol.forEach(x => {
+      if (x.mois < cible) dispo[x.mois] = true;
+    });
+    const liste = Object.keys(dispo).sort();
+    return liste.length ? liste[liste.length - 1] : null;
+  }
+
+  // Remplit le formulaire à partir d'un mois donné (sans rien enregistrer)
+  function chargerDepuis(source, marquer) {
     const v = {};
     cats.forEach(c => {
       v[c.nom] = '';
     });
-    (data.finArchives || []).filter(a => a.mois === mois).forEach(a => {
+    (data.finArchives || []).filter(a => a.mois === source).forEach(a => {
       v[a.categorie] = a.montant;
     });
-    setVals(v);
     const s = {};
     FIN_COMPTES.forEach(c => {
       s[c] = '';
     });
-    (data.finSoldes || []).filter(x => x.mois === mois).forEach(x => {
+    (data.finSoldes || []).filter(x => x.mois === source).forEach(x => {
       s[x.compte] = x.montant;
     });
+    setVals(v);
     setSold(s);
+    setReconduitDe(marquer ? source : null);
+    if (marquer && onDirty) onDirty(true);
+  }
+
+  useEffect(() => {
+    const aDesDonnees = (data.finArchives || []).some(a => a.mois === mois) || (data.finSoldes || []).some(x => x.mois === mois);
+    if (aDesDonnees) {
+      chargerDepuis(mois, false);
+    } else {
+      // Mois vierge : on reconduit le dernier mois renseigné
+      const source = moisSourceAvant(mois);
+      if (source) {
+        chargerDepuis(source, true);
+      } else {
+        chargerDepuis(mois, false);
+      }
+    }
     setMsg(null);
-    if (onDirty) onDirty(false);
+    if (!((data.finArchives || []).some(a => a.mois === mois))) {
+      // onDirty géré dans chargerDepuis
+    } else if (onDirty) onDirty(false);
   }, [mois, data]);
   const totRev = revenus.reduce((a, c) => a + num(vals[c.nom]), 0);
   const totDep = depenses.reduce((a, c) => a + num(vals[c.nom]), 0);
@@ -2076,6 +2113,7 @@ function EditeurMois({
         ok: true,
         txt: 'Enregistré'
       });
+      setReconduitDe(null);
       if (onDirty) onDirty(false);
       if (onSaved) await onSaved();
     } catch (e) {
@@ -2275,7 +2313,36 @@ function EditeurMois({
       flexWrap: "wrap",
       marginBottom: 20
     }
-  }, colonne('Revenus', revenus, '#2E8B57', totRev), colonne('Dépenses', depenses, '#E04848', totDep)), React.createElement("div", {
+  }, colonne('Revenus', revenus, '#2E8B57', totRev), colonne('Dépenses', depenses, '#E04848', totDep)), reconduitDe && React.createElement("div", {
+    style: {
+      background: "#EAF4FA",
+      border: "1px solid #BBD9EA",
+      borderRadius: 12,
+      padding: "10px 16px",
+      marginBottom: 16,
+      fontSize: 12,
+      fontFamily: "DM Sans",
+      color: "#1F5C7A",
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      flexWrap: "wrap"
+    }
+  }, React.createElement("span", null, "↻ Montants reconduits depuis ", React.createElement("strong", null, moisLisible(reconduitDe)), ". Vérifie-les puis enregistre."), React.createElement("button", {
+    onClick: () => chargerDepuis(mois, false),
+    style: {
+      border: "1px solid #BBD9EA",
+      background: "transparent",
+      borderRadius: 8,
+      padding: "4px 10px",
+      cursor: "pointer",
+      fontFamily: "DM Sans",
+      fontSize: 11,
+      fontWeight: 600,
+      color: "#1F5C7A",
+      marginLeft: "auto"
+    }
+  }, "Repartir de zéro")), React.createElement("div", {
     style: {
       background: solde >= 0 ? '#EAF6EF' : '#FDECEC',
       border: `1px solid ${solde >= 0 ? '#BFE3CD' : '#F5C6C6'}`,

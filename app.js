@@ -5,7 +5,7 @@ const {
   useRef,
   useMemo
 } = React;
-const APP_VERSION = 'v6.4';
+const APP_VERSION = 'v6.5';
 const API_URL = 'https://script.google.com/macros/s/AKfycbxyKJD9etJlzioM09crYIGHXqxNGZXq0-jadNDz3YMGMYAoZfeZ4dNmNsdne4vilEtUHw/exec';
 const COMPTES = ['Compte courant', 'Épargne France', 'Épargne Espagne'];
 const LIENS = {
@@ -177,7 +177,8 @@ function lireCache() {
           raw: {
             finCategories: o.raw.finCategories,
             finArchives: o.raw.finArchives,
-            finSoldes: o.raw.finSoldes
+            finSoldes: o.raw.finSoldes,
+            finDeclaration: o.raw.finDeclaration
           },
           at: o.at
         };
@@ -202,7 +203,8 @@ async function apiGet() {
   return {
     finCategories: raw.finCategories,
     finArchives: raw.finArchives,
-    finSoldes: raw.finSoldes
+    finSoldes: raw.finSoldes,
+    finDeclaration: raw.finDeclaration
   };
 }
 async function apiPost(action, payload) {
@@ -288,6 +290,7 @@ const I = {
   lune: 'M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z',
   maison: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z',
   histo: 'M3 20.5h18M6 17v-6M11 17V6M16 17v-4',
+  doc: 'M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM14 3v5h5M9 13h6M9 17h6',
   fleche: 'M4 12h15M13 6l6 6-6 6'
 };
 function IcoMenu() {
@@ -1764,6 +1767,538 @@ function PageHistorique({
   }, a.n, " mois saisis · moyenne ", eur(a.n ? a.tot / a.n : 0), " par mois")))));
 }
 
+/* ---------- Déclaration de revenus ---------- */
+
+const CLE_CLASSES = 'comptes-decl-classes';
+const CLASSES = [['france', 'France'], ['expat', 'Expatriation'], ['non', 'Ignorer']];
+function lireClasses() {
+  try {
+    return JSON.parse(localStorage.getItem(CLE_CLASSES) || '{}') || {};
+  } catch (e) {
+    return {};
+  }
+}
+function classeDefaut(nom) {
+  if (estLoyersFrance(nom)) return 'fonciers';
+  if (/institut/i.test(nom)) return 'france';
+  return 'expat';
+}
+
+// Feuille Fin_Declaration écrite par Mes Locations : [Annee, Mois, Cle, Libelle, <logements…>, Total]
+function analyserDeclaration(t) {
+  if (!t || t.length < 2) return null;
+  const tete = t[0].map(String);
+  const logs = tete.slice(4, tete.length - 1);
+  const annees = {};
+  t.slice(1).forEach(r => {
+    const y = String(r[0]).trim();
+    if (!/^\d{4}$/.test(y)) return;
+    const A = annees[y] || (annees[y] = {
+      lignes: {},
+      ordre: [],
+      mois: {}
+    });
+    const vals = logs.map((_, i) => num(r[4 + i]));
+    const total = num(r[4 + logs.length]);
+    const mois = String(r[1]).trim();
+    const cle = String(r[2]).trim();
+    if (mois) {
+      const M = A.mois[mois] || (A.mois[mois] = {});
+      M[cle] = total;
+    } else {
+      A.lignes[cle] = {
+        lib: String(r[3]),
+        vals,
+        total
+      };
+      A.ordre.push(cle);
+    }
+  });
+  return {
+    logs,
+    annees
+  };
+}
+function calculDeclaration(d, decl, y, classes) {
+  const classe = nom => classes[nom] || classeDefaut(nom);
+  const cats = {};
+  d.arch.forEach(a => {
+    if (a.mois.slice(0, 4) !== y || (d.typeDe[a.categorie] || 'revenu') !== 'revenu' || !a.montant) return;
+    const c = cats[a.categorie] || (cats[a.categorie] = {
+      nom: a.categorie,
+      total: 0,
+      mois: {}
+    });
+    c.total += a.montant;
+    c.mois[a.mois.slice(5, 7)] = (c.mois[a.mois.slice(5, 7)] || 0) + a.montant;
+  });
+  const liste = Object.values(cats).sort((p, q) => q.total - p.total);
+  const france = liste.filter(c => classe(c.nom) === 'france');
+  const expat = liste.filter(c => classe(c.nom) === 'expat');
+  const fon = decl && decl.annees[y] ? decl.annees[y] : null;
+  const mois = Array.from({
+    length: 12
+  }, (_, i) => {
+    const mm = String(i + 1).padStart(2, '0');
+    const fm = fon && fon.mois[mm] ? fon.mois[mm] : {};
+    return {
+      mm,
+      france: france.reduce((t, c) => t + (c.mois[mm] || 0), 0),
+      loyers: fm.loyers || 0,
+      frais: fm.frais || 0,
+      expat: expat.reduce((t, c) => t + (c.mois[mm] || 0), 0)
+    };
+  });
+  return {
+    liste,
+    france,
+    expat,
+    fon,
+    mois,
+    classe,
+    totFrance: france.reduce((t, c) => t + c.total, 0),
+    totExpat: expat.reduce((t, c) => t + c.total, 0)
+  };
+}
+const LIGNES_AFFICHEES = ['211', '221', '222', '223', '224', '227', '229', '250', '240', 'resultat'];
+function lignesFoncieres(fon) {
+  if (!fon) return [];
+  return LIGNES_AFFICHEES.filter(k => fon.lignes[k] && (fon.lignes[k].total || ['211', '221', '222', '223', '224', '227', '240', 'resultat'].indexOf(k) >= 0)).map(k => Object.assign({
+    cle: k
+  }, fon.lignes[k]));
+}
+function chargerScript(src) {
+  return new Promise((ok, ko) => {
+    if (document.querySelector('script[src="' + src + '"]')) return ok();
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = ok;
+    s.onerror = () => ko(new Error('module PDF introuvable (connexion ?)'));
+    document.head.appendChild(s);
+  });
+}
+function telecharger(blob, nom) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nom;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+const f2 = n => (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
+function tableauxExport(c, decl, y) {
+  const t = [];
+  t.push({
+    titre: '1. Revenus de source française — salaires',
+    tete: ['Revenu', 'Montant ' + y],
+    lignes: c.france.map(x => [x.nom, f2(x.total)]).concat([['Total', f2(c.totFrance)]])
+  });
+  if (c.fon) {
+    t.push({
+      titre: '2. Revenus fonciers en France (déclaration 2044)',
+      tete: ['Ligne'].concat(decl.logs, ['Total']),
+      lignes: lignesFoncieres(c.fon).map(l => [(l.cle === 'resultat' ? '' : l.cle + ' - ') + l.lib].concat(l.vals.map(f2), [f2(l.total)]))
+    });
+  }
+  t.push({
+    titre: '3. Revenus réalisés en expatriation (autre partie de la déclaration)',
+    tete: ['Revenu', 'Montant ' + y],
+    lignes: c.expat.map(x => [x.nom, f2(x.total)]).concat([['Total', f2(c.totExpat)]])
+  });
+  t.push({
+    titre: '4. Mois par mois',
+    tete: ['Mois', 'Salaires France', 'Loyers France HC', 'Frais fonciers', 'Expatriation'],
+    lignes: c.mois.map(m => [capital(MOIS_L[+m.mm - 1]), f2(m.france), f2(m.loyers), f2(m.frais), f2(m.expat)]).concat([['Total', f2(c.totFrance), f2(c.mois.reduce((s, m) => s + m.loyers, 0)), f2(c.mois.reduce((s, m) => s + m.frais, 0)), f2(c.totExpat)]])
+  });
+  return t;
+}
+const NOTE_DECL = 'Montants tels que saisis dans Comptes (sommes perçues). Pour les salaires, reporte le net imposable de tes bulletins ou attestations. Revenus fonciers calculés par Mes Locations : loyers hors charges à leur date d\'encaissement, frais déductibles. Les revenus de ton épouse ne sont pas suivis ici. Document d\'aide, à vérifier avec la notice.';
+function PageDeclaration({
+  d,
+  raw,
+  aujourdhui,
+  notifier
+}) {
+  const decl = useMemo(() => analyserDeclaration(raw && raw.finDeclaration), [raw]);
+  const [classes, setClasses] = useState(lireClasses);
+  const annees = Array.from(new Set(d.arch.map(a => a.mois.slice(0, 4)).concat(decl ? Object.keys(decl.annees) : []))).sort();
+  const parDefaut = aujourdhui.getMonth() < 6 && annees.indexOf(String(aujourdhui.getFullYear() - 1)) >= 0 ? String(aujourdhui.getFullYear() - 1) : annees[annees.length - 1];
+  const [anSel, setAnSel] = useState(null);
+  const y = anSel && annees.indexOf(anSel) >= 0 ? anSel : parDefaut;
+  const [voirClasses, setVoirClasses] = useState(false);
+  const [voirMois, setVoirMois] = useState(false);
+  if (!y) return /*#__PURE__*/React.createElement("div", {
+    className: "page"
+  }, /*#__PURE__*/React.createElement("header", {
+    className: "entete"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Impôts"))), /*#__PURE__*/React.createElement("div", {
+    className: "carte petit"
+  }, "Aucune donnée."));
+  const c = calculDeclaration(d, decl, y, classes);
+  const fon = lignesFoncieres(c.fon);
+  const res = c.fon && c.fon.lignes.resultat ? c.fon.lignes.resultat.total : null;
+  function changerClasse(nom, v) {
+    const n = Object.assign({}, classes, {
+      [nom]: v
+    });
+    setClasses(n);
+    try {
+      localStorage.setItem(CLE_CLASSES, JSON.stringify(n));
+    } catch (e) {/* rien */}
+  }
+  function exportCsv() {
+    const lignes = [['Revenus ' + y + ' — déclaration ' + (+y + 1)], []];
+    tableauxExport(c, decl, y).forEach(t => {
+      lignes.push([t.titre], t.tete);
+      t.lignes.forEach(l => lignes.push(l));
+      lignes.push([]);
+    });
+    if (res !== null) lignes.push([res >= 0 ? 'Bénéfice foncier (2042, case 4BA)' : 'Déficit foncier', f2(Math.abs(res))], []);
+    lignes.push([NOTE_DECL]);
+    const csv = '﻿' + lignes.map(r => r.map(x => '"' + String(x === undefined ? '' : x).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+    telecharger(new Blob([csv], {
+      type: 'text/csv;charset=utf-8'
+    }), 'declaration-revenus-' + y + '.csv');
+    notifier('Fichier CSV téléchargé');
+  }
+  async function exportPdf() {
+    try {
+      await chargerScript('lib/jspdf.umd.min.js');
+      await chargerScript('lib/jspdf.plugin.autotable.min.js');
+      const pdf = new window.jspdf.jsPDF({
+        unit: 'mm',
+        format: 'a4'
+      });
+      const net = s => String(s).replace(/[  ]/g, ' ');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(16);
+      pdf.text('Revenus ' + y, 14, 18);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(10);
+      pdf.setTextColor(90);
+      pdf.text(net('Aide à la déclaration ' + (+y + 1) + ' · éditée le ' + new Date().toLocaleDateString('fr-FR')), 14, 25);
+      pdf.setTextColor(0);
+      let yy = 32;
+      tableauxExport(c, decl, y).forEach(t => {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(11);
+        if (yy > 260) {
+          pdf.addPage();
+          yy = 18;
+        }
+        pdf.text(net(t.titre), 14, yy);
+        const droite = {};
+        t.tete.forEach((_, i) => {
+          if (i) droite[i] = {
+            halign: 'right'
+          };
+        });
+        pdf.autoTable({
+          startY: yy + 3,
+          head: [t.tete],
+          body: t.lignes,
+          styles: {
+            font: 'helvetica',
+            fontSize: 9,
+            cellPadding: 1.8
+          },
+          headStyles: {
+            fillColor: [40, 90, 160]
+          },
+          columnStyles: droite,
+          didParseCell: k => {
+            if (k.section === 'body' && /^(Total|240|Résultat)/.test(String(k.row.raw[0]))) k.cell.styles.fontStyle = 'bold';
+          }
+        });
+        yy = pdf.lastAutoTable.finalY + 9;
+      });
+      if (res !== null) {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(11);
+        pdf.text(net((res >= 0 ? 'Bénéfice foncier à reporter (2042, case 4BA) : ' : 'Déficit foncier : ') + eur(Math.abs(res))), 14, Math.min(yy, 280));
+        yy += 7;
+      }
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8);
+      pdf.setTextColor(110);
+      if (yy > 270) {
+        pdf.addPage();
+        yy = 18;
+      }
+      pdf.text(pdf.splitTextToSize(net(NOTE_DECL), 182), 14, yy);
+      telecharger(pdf.output('blob'), 'declaration-revenus-' + y + '.pdf');
+      notifier('PDF téléchargé');
+    } catch (e) {
+      notifier('PDF impossible : ' + e.message, true);
+    }
+  }
+  const Rang = ({
+    nom,
+    mt,
+    sous,
+    fort
+  }) => /*#__PURE__*/React.createElement("div", {
+    className: "rang",
+    style: {
+      alignItems: 'flex-start'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "nom",
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 2,
+      whiteSpace: 'normal',
+      fontWeight: fort ? 700 : undefined
+    }
+  }, /*#__PURE__*/React.createElement("span", null, nom), sous && /*#__PURE__*/React.createElement("span", {
+    className: "petit",
+    style: {
+      fontSize: 12.5
+    }
+  }, sous)), /*#__PURE__*/React.createElement("span", {
+    className: "mt",
+    style: {
+      fontWeight: fort ? 800 : undefined
+    }
+  }, eur(mt)));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "page"
+  }, /*#__PURE__*/React.createElement("header", {
+    className: "entete"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Impôts"))), /*#__PURE__*/React.createElement("div", {
+    className: "chips",
+    role: "group",
+    "aria-label": "Année des revenus"
+  }, annees.slice().reverse().map(a => /*#__PURE__*/React.createElement("button", {
+    key: a,
+    "aria-pressed": a === y,
+    onClick: () => setAnSel(a)
+  }, a))), /*#__PURE__*/React.createElement("div", {
+    className: "petit",
+    style: {
+      margin: '-4px 4px 0'
+    }
+  }, "Revenus ", y, ", à déclarer en ", +y + 1, "."), /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "section-tete"
+  }, /*#__PURE__*/React.createElement("h2", null, "Salaires de source française"), /*#__PURE__*/React.createElement("span", {
+    className: "c-rev"
+  }, eur(c.totFrance))), /*#__PURE__*/React.createElement("div", {
+    className: "liste"
+  }, c.france.length ? c.france.map(x => /*#__PURE__*/React.createElement(Rang, {
+    key: x.nom,
+    nom: x.nom,
+    mt: x.total,
+    sous: Object.keys(x.mois).length + ' mois'
+  })) : /*#__PURE__*/React.createElement("div", {
+    className: "rang"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "nom petit"
+  }, "Aucun revenu classé « France » en ", y, "."))), /*#__PURE__*/React.createElement("div", {
+    className: "petit",
+    style: {
+      margin: '6px 4px 0'
+    }
+  }, "Sommes perçues : reporte le net imposable indiqué sur tes bulletins ou ton attestation.")), /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "section-tete"
+  }, /*#__PURE__*/React.createElement("h2", null, "Revenus fonciers en France"), res !== null && /*#__PURE__*/React.createElement("span", {
+    className: "c-rev"
+  }, eur(res))), c.fon ? /*#__PURE__*/React.createElement("div", {
+    className: "liste"
+  }, fon.map(l => /*#__PURE__*/React.createElement(Rang, {
+    key: l.cle,
+    nom: (l.cle === 'resultat' ? '' : l.cle + ' · ') + l.lib,
+    mt: l.total,
+    fort: l.cle === '240' || l.cle === 'resultat',
+    sous: decl.logs.map((n, i) => n + ' ' + eur(l.vals[i])).join(' · ')
+  }))) : /*#__PURE__*/React.createElement("div", {
+    className: "bandeau warn"
+  }, /*#__PURE__*/React.createElement(IcoInfo, {
+    color: "var(--warnInk)"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "txt"
+  }, decl ? 'Aucun revenu foncier pour ' + y + '.' : 'Les chiffres de Mes Locations ne sont pas encore reçus : ajoute « finDeclaration » au script Comptes (voir les instructions), puis actualise.')), res !== null && /*#__PURE__*/React.createElement("div", {
+    className: "bandeau info",
+    style: {
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement(IcoInfo, {
+    color: "var(--chipInk)"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "txt"
+  }, res >= 0 ? 'Bénéfice foncier à reporter sur la 2042, case 4BA : ' : 'Déficit foncier (cases 4BB / 4BC, voir notice) : ', /*#__PURE__*/React.createElement("b", null, eur(Math.abs(res))), ".", c.fon.lignes.charges && c.fon.lignes.charges.total ? ' Charges récupérées auprès des locataires (non déclarées) : ' + eur(c.fon.lignes.charges.total) + '.' : ''))), /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "section-tete"
+  }, /*#__PURE__*/React.createElement("h2", null, "Revenus en expatriation"), /*#__PURE__*/React.createElement("span", {
+    className: "c-rev"
+  }, eur(c.totExpat))), /*#__PURE__*/React.createElement("div", {
+    className: "liste"
+  }, c.expat.length ? c.expat.map(x => /*#__PURE__*/React.createElement(Rang, {
+    key: x.nom,
+    nom: x.nom,
+    mt: x.total,
+    sous: Object.keys(x.mois).length + ' mois'
+  })) : /*#__PURE__*/React.createElement("div", {
+    className: "rang"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "nom petit"
+  }, "Aucun revenu classé « Expatriation » en ", y, "."))), /*#__PURE__*/React.createElement("div", {
+    className: "petit",
+    style: {
+      margin: '6px 4px 0'
+    }
+  }, "À déclarer dans la partie revenus réalisés en expatriation. Les revenus de ton épouse ne sont pas suivis dans Comptes.")), /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "section-tete",
+    style: {
+      width: '100%',
+      background: 'none',
+      border: 0,
+      padding: 0,
+      cursor: 'pointer',
+      color: 'inherit'
+    },
+    onClick: () => setVoirMois(!voirMois),
+    "aria-expanded": voirMois
+  }, /*#__PURE__*/React.createElement("h2", null, "Mois par mois"), /*#__PURE__*/React.createElement("span", {
+    className: "lien"
+  }, voirMois ? 'Masquer' : 'Afficher')), voirMois && /*#__PURE__*/React.createElement("div", {
+    className: "carte",
+    style: {
+      padding: '6px 10px',
+      overflowX: 'auto'
+    },
+    "data-noswipe": "1"
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: '100%',
+      borderCollapse: 'collapse',
+      fontSize: 13
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      color: 'var(--ink3)'
+    }
+  }, /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: 'left',
+      padding: '6px 4px'
+    }
+  }, "Mois"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: 'right'
+    }
+  }, "Sal. FR"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: 'right'
+    }
+  }, "Loyers HC"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: 'right'
+    }
+  }, "Frais"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: 'right'
+    }
+  }, "Expat."))), /*#__PURE__*/React.createElement("tbody", null, c.mois.map(m => /*#__PURE__*/React.createElement("tr", {
+    key: m.mm,
+    style: {
+      borderTop: '1px solid var(--line2)'
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: '6px 4px'
+    }
+  }, MOIS_C[+m.mm - 1]), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, m.france ? f2(m.france) : '—'), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, m.loyers ? f2(m.loyers) : '—'), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, m.frais ? f2(m.frais) : '—'), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, m.expat ? f2(m.expat) : '—'))))))), /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "section-tete",
+    style: {
+      width: '100%',
+      background: 'none',
+      border: 0,
+      padding: 0,
+      cursor: 'pointer',
+      color: 'inherit'
+    },
+    onClick: () => setVoirClasses(!voirClasses),
+    "aria-expanded": voirClasses
+  }, /*#__PURE__*/React.createElement("h2", null, "Classer mes revenus"), /*#__PURE__*/React.createElement("span", {
+    className: "lien"
+  }, voirClasses ? 'Masquer' : 'Modifier')), voirClasses && /*#__PURE__*/React.createElement("div", {
+    className: "liste"
+  }, c.liste.filter(x => c.classe(x.nom) !== 'fonciers').map(x => /*#__PURE__*/React.createElement("div", {
+    className: "rang",
+    key: x.nom,
+    style: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "nom"
+  }, x.nom), /*#__PURE__*/React.createElement("div", {
+    className: "seg",
+    role: "group",
+    "aria-label": 'Classement de ' + x.nom,
+    style: {
+      margin: 0
+    }
+  }, CLASSES.map(([k, v]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    "aria-pressed": c.classe(x.nom) === k,
+    onClick: () => changerClasse(x.nom, k)
+  }, v))))), /*#__PURE__*/React.createElement("div", {
+    className: "rang"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "nom petit",
+    style: {
+      whiteSpace: 'normal'
+    }
+  }, "« Loyers France » est remplacé par le détail des revenus fonciers calculé par Mes Locations.")))), /*#__PURE__*/React.createElement("div", {
+    className: "deux",
+    style: {
+      display: 'flex',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "bouton second",
+    onClick: exportCsv
+  }, "Export CSV"), /*#__PURE__*/React.createElement("button", {
+    className: "bouton second",
+    onClick: exportPdf
+  }, "Export PDF")), /*#__PURE__*/React.createElement("div", {
+    className: "petit",
+    style: {
+      margin: '0 4px 8px'
+    }
+  }, NOTE_DECL));
+}
+
 /* ---------- Menu ---------- */
 
 function FeuilleMenu({
@@ -1926,6 +2461,9 @@ const ONGLETS = [{
 }, {
   id: 'historique',
   label: 'Historique'
+}, {
+  id: 'declaration',
+  label: 'Impôts'
 }];
 function lireTheme() {
   try {
@@ -2104,6 +2642,11 @@ function App() {
   }), page === 'historique' && /*#__PURE__*/React.createElement(PageHistorique, {
     d: d,
     onGoMois: ouvrirMois
+  }), page === 'declaration' && /*#__PURE__*/React.createElement(PageDeclaration, {
+    d: d,
+    raw: raw,
+    aujourdhui: aujourdhui,
+    notifier: notifier
   })), /*#__PURE__*/React.createElement("nav", {
     className: "onglets",
     "aria-label": "Navigation principale"
@@ -2118,6 +2661,9 @@ function App() {
     size: 24
   }), o.id === 'mois' && /*#__PURE__*/React.createElement(IcoCal, null), o.id === 'historique' && /*#__PURE__*/React.createElement(Ico, {
     d: I.histo,
+    size: 24
+  }), o.id === 'declaration' && /*#__PURE__*/React.createElement(Ico, {
+    d: I.doc,
     size: 24
   }), o.label)))), menu && /*#__PURE__*/React.createElement(FeuilleMenu, {
     d: d,

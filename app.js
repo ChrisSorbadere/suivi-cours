@@ -5,7 +5,7 @@ const {
   useRef,
   useMemo
 } = React;
-const APP_VERSION = 'v6.5';
+const APP_VERSION = 'v6.6';
 const API_URL = 'https://script.google.com/macros/s/AKfycbxyKJD9etJlzioM09crYIGHXqxNGZXq0-jadNDz3YMGMYAoZfeZ4dNmNsdne4vilEtUHw/exec';
 const COMPTES = ['Compte courant', 'Épargne France', 'Épargne Espagne'];
 const LIENS = {
@@ -178,7 +178,8 @@ function lireCache() {
             finCategories: o.raw.finCategories,
             finArchives: o.raw.finArchives,
             finSoldes: o.raw.finSoldes,
-            finDeclaration: o.raw.finDeclaration
+            finDeclaration: o.raw.finDeclaration,
+            finRevenus: o.raw.finRevenus
           },
           at: o.at
         };
@@ -204,7 +205,8 @@ async function apiGet() {
     finCategories: raw.finCategories,
     finArchives: raw.finArchives,
     finSoldes: raw.finSoldes,
-    finDeclaration: raw.finDeclaration
+    finDeclaration: raw.finDeclaration,
+    finRevenus: raw.finRevenus
   };
 }
 async function apiPost(action, payload) {
@@ -1819,7 +1821,74 @@ function analyserDeclaration(t) {
     annees
   };
 }
-function calculDeclaration(d, decl, y, classes) {
+
+// Feuille Fin_Revenus (copie du fichier « Déclarations impôts ») : [Annee, Groupe (france|hors|conjoint), Nom, Mois, Montant]
+function analyserRevenus(t) {
+  if (!t || t.length < 2) return null;
+  const out = {};
+  t.slice(1).forEach(r => {
+    const y = String(r[0]).trim();
+    if (!/^\d{4}$/.test(y)) return;
+    const A = out[y] || (out[y] = {
+      france: {},
+      hors: {},
+      conjoint: []
+    });
+    const g = String(r[1]).trim(),
+      nom = String(r[2]).trim(),
+      mm = String(r[3]).trim(),
+      mt = num(r[4]);
+    if (g === 'conjoint') {
+      A.conjoint.push({
+        nom,
+        total: mt
+      });
+      return;
+    }
+    const grp = g === 'hors' ? A.hors : A.france;
+    const c = grp[nom] || (grp[nom] = {
+      nom,
+      total: 0,
+      mois: {},
+      fonciers: /fonciers/i.test(nom)
+    });
+    c.total += mt;
+    if (mm) c.mois[mm] = (c.mois[mm] || 0) + mt;
+  });
+  return out;
+}
+function calculDeclaration(d, decl, y, classes, rev) {
+  if (rev && rev[y]) {
+    const R = rev[y];
+    const france = Object.values(R.france).filter(c => !c.fonciers);
+    const expat = Object.values(R.hors);
+    const fon = decl && decl.annees[y] ? decl.annees[y] : null;
+    const mois = Array.from({
+      length: 12
+    }, (_, i) => {
+      const mm = String(i + 1).padStart(2, '0');
+      const fm = fon && fon.mois[mm] ? fon.mois[mm] : {};
+      return {
+        mm,
+        france: france.reduce((t, c) => t + (c.mois[mm] || 0), 0),
+        loyers: fm.loyers || 0,
+        frais: fm.frais || 0,
+        expat: expat.reduce((t, c) => t + (c.mois[mm] || 0), 0)
+      };
+    });
+    return {
+      source: 'fichier',
+      liste: [],
+      france,
+      expat,
+      fon,
+      mois,
+      conjoint: R.conjoint,
+      classe: () => '',
+      totFrance: france.reduce((t, c) => t + c.total, 0),
+      totExpat: expat.reduce((t, c) => t + c.total, 0)
+    };
+  }
   const classe = nom => classes[nom] || classeDefaut(nom);
   const cats = {};
   d.arch.forEach(a => {
@@ -1850,6 +1919,8 @@ function calculDeclaration(d, decl, y, classes) {
     };
   });
   return {
+    source: 'comptes',
+    conjoint: [],
     liste,
     france,
     expat,
@@ -1907,6 +1978,11 @@ function tableauxExport(c, decl, y) {
     tete: ['Revenu', 'Montant ' + y],
     lignes: c.expat.map(x => [x.nom, f2(x.total)]).concat([['Total', f2(c.totExpat)]])
   });
+  if (c.conjoint.length) t.push({
+    titre: 'Revenus du conjoint',
+    tete: ['Revenu', 'Montant ' + y],
+    lignes: c.conjoint.map(x => [x.nom, f2(x.total)])
+  });
   t.push({
     titre: '4. Mois par mois',
     tete: ['Mois', 'Salaires France', 'Loyers France HC', 'Frais fonciers', 'Expatriation'],
@@ -1914,7 +1990,7 @@ function tableauxExport(c, decl, y) {
   });
   return t;
 }
-const NOTE_DECL = 'Montants tels que saisis dans Comptes (sommes perçues). Pour les salaires, reporte le net imposable de tes bulletins ou attestations. Revenus fonciers calculés par Mes Locations : loyers hors charges à leur date d\'encaissement, frais déductibles. Les revenus de ton épouse ne sont pas suivis ici. Document d\'aide, à vérifier avec la notice.';
+const NOTE_DECL = 'Salaires et revenus hors France : fichier « Déclarations impôts » (ou, à défaut, montants saisis dans Comptes). Pour les salaires, reporte le net imposable de tes bulletins ou attestations. Revenus fonciers calculés par Mes Locations : loyers hors charges à leur date d\'encaissement, frais déductibles. Document d\'aide, à vérifier avec la notice.';
 function PageDeclaration({
   d,
   raw,
@@ -1922,8 +1998,9 @@ function PageDeclaration({
   notifier
 }) {
   const decl = useMemo(() => analyserDeclaration(raw && raw.finDeclaration), [raw]);
+  const rev = useMemo(() => analyserRevenus(raw && raw.finRevenus), [raw]);
   const [classes, setClasses] = useState(lireClasses);
-  const annees = Array.from(new Set(d.arch.map(a => a.mois.slice(0, 4)).concat(decl ? Object.keys(decl.annees) : []))).sort();
+  const annees = Array.from(new Set(d.arch.map(a => a.mois.slice(0, 4)).concat(decl ? Object.keys(decl.annees) : [], rev ? Object.keys(rev) : []))).sort();
   const parDefaut = aujourdhui.getMonth() < 6 && annees.indexOf(String(aujourdhui.getFullYear() - 1)) >= 0 ? String(aujourdhui.getFullYear() - 1) : annees[annees.length - 1];
   const [anSel, setAnSel] = useState(null);
   const y = anSel && annees.indexOf(anSel) >= 0 ? anSel : parDefaut;
@@ -1936,7 +2013,7 @@ function PageDeclaration({
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Impôts"))), /*#__PURE__*/React.createElement("div", {
     className: "carte petit"
   }, "Aucune donnée."));
-  const c = calculDeclaration(d, decl, y, classes);
+  const c = calculDeclaration(d, decl, y, classes, rev);
   const fon = lignesFoncieres(c.fon);
   const res = c.fon && c.fon.lignes.resultat ? c.fon.lignes.resultat.total : null;
   function changerClasse(nom, v) {
@@ -2154,7 +2231,25 @@ function PageDeclaration({
     style: {
       margin: '6px 4px 0'
     }
-  }, "À déclarer dans la partie revenus réalisés en expatriation. Les revenus de ton épouse ne sont pas suivis dans Comptes.")), /*#__PURE__*/React.createElement("div", {
+  }, "À déclarer dans la partie revenus réalisés en expatriation.", c.source === 'comptes' ? ' Les revenus de ton épouse ne sont pas suivis dans Comptes.' : '')), c.conjoint.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "section-tete"
+  }, /*#__PURE__*/React.createElement("h2", null, "Revenus du conjoint"), /*#__PURE__*/React.createElement("span", {
+    className: "c-rev"
+  }, eur(c.conjoint.reduce((t, x) => t + x.total, 0)))), /*#__PURE__*/React.createElement("div", {
+    className: "liste"
+  }, c.conjoint.map(x => /*#__PURE__*/React.createElement(Rang, {
+    key: x.nom,
+    nom: x.nom,
+    mt: x.total
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "bandeau info"
+  }, /*#__PURE__*/React.createElement(IcoInfo, {
+    color: "var(--chipInk)"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "txt"
+  }, c.source === 'fichier' ? 'Salaires et revenus hors France lus dans ton fichier « Déclarations impôts », onglet Revenus ' + y + '.' : 'Pas d\'onglet « Revenus ' + y + ' » dans ton fichier impôts : montants tirés de Comptes.')), /*#__PURE__*/React.createElement("div", {
     className: "section"
   }, /*#__PURE__*/React.createElement("button", {
     className: "section-tete",
@@ -2233,7 +2328,7 @@ function PageDeclaration({
     style: {
       textAlign: 'right'
     }
-  }, m.expat ? f2(m.expat) : '—'))))))), /*#__PURE__*/React.createElement("div", {
+  }, m.expat ? f2(m.expat) : '—'))))))), c.source === 'comptes' && /*#__PURE__*/React.createElement("div", {
     className: "section"
   }, /*#__PURE__*/React.createElement("button", {
     className: "section-tete",

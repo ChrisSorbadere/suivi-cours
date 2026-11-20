@@ -1,7 +1,7 @@
 // Comptes — v6.0 (source JSX, compilée en app.js)
 const { useState, useEffect, useRef, useMemo } = React;
 
-const APP_VERSION = 'v6.6';
+const APP_VERSION = 'v6.7';
 const API_URL = 'https://script.google.com/macros/s/AKfycbxyKJD9etJlzioM09crYIGHXqxNGZXq0-jadNDz3YMGMYAoZfeZ4dNmNsdne4vilEtUHw/exec';
 const COMPTES = ['Compte courant', 'Épargne France', 'Épargne Espagne'];
 const LIENS = {
@@ -1187,7 +1187,7 @@ function PageDeclaration({ d, raw, aujourdhui, notifier }) {
   const decl = useMemo(() => analyserDeclaration(raw && raw.finDeclaration), [raw]);
   const rev = useMemo(() => analyserRevenus(raw && raw.finRevenus), [raw]);
   const [classes, setClasses] = useState(lireClasses);
-  const annees = Array.from(new Set(d.arch.map((a) => a.mois.slice(0, 4)).concat(decl ? Object.keys(decl.annees) : [], rev ? Object.keys(rev) : []))).sort();
+  const annees = Array.from(new Set(d.arch.map((a) => a.mois.slice(0, 4)).concat(rev ? Object.keys(rev) : [], decl ? Object.keys(decl.annees).filter((x) => x >= String(aujourdhui.getFullYear() - 2)) : []))).sort();
   const parDefaut = aujourdhui.getMonth() < 6 && annees.indexOf(String(aujourdhui.getFullYear() - 1)) >= 0
     ? String(aujourdhui.getFullYear() - 1) : annees[annees.length - 1];
   const [anSel, setAnSel] = useState(null);

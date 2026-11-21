@@ -5,7 +5,7 @@ const {
   useRef,
   useMemo
 } = React;
-const APP_VERSION = 'v6.7';
+const APP_VERSION = 'v6.8';
 const API_URL = 'https://script.google.com/macros/s/AKfycbxyKJD9etJlzioM09crYIGHXqxNGZXq0-jadNDz3YMGMYAoZfeZ4dNmNsdne4vilEtUHw/exec';
 const COMPTES = ['Compte courant', 'Épargne France', 'Épargne Espagne'];
 const LIENS = {
@@ -2016,6 +2016,11 @@ function PageDeclaration({
   const c = calculDeclaration(d, decl, y, classes, rev);
   const fon = lignesFoncieres(c.fon);
   const res = c.fon && c.fon.lignes.resultat ? c.fon.lignes.resultat.total : null;
+  function demanderVerification() {
+    const l = k => c.fon && c.fon.lignes[k] ? eur(c.fon.lignes[k].total) : '—';
+    const q = 'Vérifie que l\'onglet Impôts de mon appli Comptes est à jour pour ma déclaration ' + (+y + 1) + ' (revenus ' + y + '). ' + 'Contrôle les règles en vigueur cette année (déclaration 2044 au régime réel : lignes 211 à 250, forfait de la ligne 222, seuil du micro-foncier, ' + 'déclaration des salaires de source française et des revenus d\'expatriation pour un résident fiscal espagnol) ' + 'et dis-moi si Mes Locations ou Comptes doivent être mis à jour. ' + 'Chiffres affichés : salaires de source française ' + eur(c.totFrance) + ' ; revenus fonciers : ligne 211 ' + l('211') + ', ligne 221 ' + l('221') + ', ligne 222 ' + l('222') + ', ligne 223 ' + l('223') + ', ligne 224 ' + l('224') + ', ligne 227 ' + l('227') + ', total des frais ' + l('240') + ', résultat foncier ' + l('resultat') + ' ; revenus en expatriation ' + eur(c.totExpat) + '.';
+    window.open('https://claude.ai/new?q=' + encodeURIComponent(q.replace(/[\u202f\u00a0]/g, ' ')), '_blank');
+  }
   function changerClasse(nom, v) {
     const n = Object.assign({}, classes, {
       [nom]: v
@@ -2158,7 +2163,21 @@ function PageDeclaration({
     style: {
       margin: '-4px 4px 0'
     }
-  }, "Revenus ", y, ", à déclarer en ", +y + 1, "."), /*#__PURE__*/React.createElement("div", {
+  }, "Revenus ", y, ", à déclarer en ", +y + 1, "."), /*#__PURE__*/React.createElement("button", {
+    className: "bandeau info",
+    onClick: demanderVerification,
+    style: {
+      width: '100%',
+      textAlign: 'left',
+      cursor: 'pointer',
+      font: 'inherit',
+      color: 'inherit'
+    }
+  }, /*#__PURE__*/React.createElement(IcoInfo, {
+    color: "var(--chipInk)"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "txt"
+  }, /*#__PURE__*/React.createElement("b", null, "Ces chiffres sont-ils à jour pour ma déclaration ", +y + 1, " ?"), /*#__PURE__*/React.createElement("br", null), "Demander à Claude de vérifier les règles et les montants de cet onglet.")), /*#__PURE__*/React.createElement("div", {
     className: "section"
   }, /*#__PURE__*/React.createElement("div", {
     className: "section-tete"

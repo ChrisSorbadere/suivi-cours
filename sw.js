@@ -1,5 +1,5 @@
 // v6 — réseau d'abord : l'app se met toujours à jour
-const CACHE = 'comptes-v6.8';
+const CACHE = 'comptes-v6.9';
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()

@@ -5,7 +5,7 @@ const {
   useRef,
   useMemo
 } = React;
-const APP_VERSION = 'v6.8';
+const APP_VERSION = 'v6.9';
 const API_URL = 'https://script.google.com/macros/s/AKfycbxyKJD9etJlzioM09crYIGHXqxNGZXq0-jadNDz3YMGMYAoZfeZ4dNmNsdne4vilEtUHw/exec';
 const COMPTES = ['Compte courant', 'Épargne France', 'Épargne Espagne'];
 const LIENS = {
@@ -2000,7 +2000,7 @@ function PageDeclaration({
   const decl = useMemo(() => analyserDeclaration(raw && raw.finDeclaration), [raw]);
   const rev = useMemo(() => analyserRevenus(raw && raw.finRevenus), [raw]);
   const [classes, setClasses] = useState(lireClasses);
-  const annees = Array.from(new Set(d.arch.map(a => a.mois.slice(0, 4)).concat(rev ? Object.keys(rev) : [], decl ? Object.keys(decl.annees).filter(x => x >= String(aujourdhui.getFullYear() - 2)) : []))).sort();
+  const annees = Array.from(new Set(d.arch.map(a => a.mois.slice(0, 4)).concat(rev ? Object.keys(rev) : [], decl ? Object.keys(decl.annees).filter(x => x >= String(aujourdhui.getFullYear() - 2)) : []))).filter(x => x <= String(aujourdhui.getFullYear())).sort();
   const parDefaut = aujourdhui.getMonth() < 6 && annees.indexOf(String(aujourdhui.getFullYear() - 1)) >= 0 ? String(aujourdhui.getFullYear() - 1) : annees[annees.length - 1];
   const [anSel, setAnSel] = useState(null);
   const y = anSel && annees.indexOf(anSel) >= 0 ? anSel : parDefaut;
@@ -2593,7 +2593,14 @@ function App() {
   const [maj, setMaj] = useState(cache && cache.at ? new Date(cache.at) : null);
   const [chargement, setChargement] = useState(false);
   const [erreur, setErreur] = useState(null);
-  const [page, setPage] = useState('accueil');
+  const [page, setPage] = useState(() => /impots|declaration/i.test(location.hash) ? 'declaration' : 'accueil');
+  useEffect(() => {
+    const surHash = () => {
+      if (/impots|declaration/i.test(location.hash)) setPage('declaration');
+    };
+    window.addEventListener('hashchange', surHash);
+    return () => window.removeEventListener('hashchange', surHash);
+  }, []);
   const [mois, setMois] = useState(ymDe(new Date()));
   const [dirty, setDirty] = useState(false);
   const [menu, setMenu] = useState(false);
